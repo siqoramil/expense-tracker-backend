@@ -5,6 +5,7 @@ import Fastify from 'fastify';
 import { env } from './lib/env.js';
 import authPlugin from './plugins/auth.js';
 import mongoPlugin from './plugins/mongo.js';
+import swaggerPlugin from './plugins/swagger.js';
 import authRoutes from './routes/auth.js';
 import budgetsRoutes from './routes/budgets.js';
 import categoriesRoutes from './routes/categories.js';
@@ -54,6 +55,7 @@ export const buildApp = async () => {
 
   await app.register(mongoPlugin);
   await app.register(authPlugin);
+  await app.register(swaggerPlugin);
 
   app.get('/health', async () => ({ ok: true, ts: Date.now() }));
 
