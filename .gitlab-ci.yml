@@ -48,11 +48,12 @@ deploy:
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
     - rsync -avz --delete
-        --exclude node_modules
-        --exclude .git
-        --exclude .env
-        -e ssh
-        . ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
-    - ssh ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && yarn install --production && yarn build && pm2 restart expense-tracker || pm2 start dist/index.js --name expense-tracker"
-  only:
-    - main
+      --exclude node_modules
+      --exclude .git
+      --exclude .env
+      -e ssh
+      . ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
+    - ssh ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && yarn install
+      --production && (pm2 restart expense-tracker || pm2 start dist/index.js --name expense-tracker)"
+only:
+  - main
