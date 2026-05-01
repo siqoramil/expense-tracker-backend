@@ -20,7 +20,7 @@ build:
     - yarn install --frozen-lockfile
     - yarn build
   tags:
-    - vps
+    - docker-build
   artifacts:
     paths:
       - dist/
@@ -33,13 +33,13 @@ typecheck:
     - yarn install --frozen-lockfile
     - yarn typecheck
   tags:
-    - vps
+    - docker-build
 
 deploy:
   image: alpine:latest
   stage: deploy
   tags:
-    - vps
+    - docker-build
   before_script:
     - apk add --no-cache openssh-client rsync
     - eval $(ssh-agent -s)
