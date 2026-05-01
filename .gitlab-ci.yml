@@ -1,0 +1,59 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  NODE_VERSION: "20"
+
+.node_template: &node_template
+  image: node:${NODE_VERSION}-alpine
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - node_modules/
+
+build:
+  <<: *node_template
+  stage: build
+  script:
+    - yarn install --frozen-lockfile
+    - yarn build
+  tags:
+    - vps
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+
+typecheck:
+  <<: *node_template
+  stage: test
+  script:
+    - yarn install --frozen-lockfile
+    - yarn typecheck
+  tags:
+    - vps
+
+deploy:
+  image: alpine:latest
+  stage: deploy
+  tags:
+    - vps
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
+  script:
+    - rsync -avz --delete
+        --exclude node_modules
+        --exclude .git
+        --exclude .env
+        -e ssh
+        . ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
+    - ssh ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && yarn install --production && yarn build && pm2 restart expense-tracker || pm2 start dist/index.js --name expense-tracker"
+  only:
+    - main
+  when: manual
