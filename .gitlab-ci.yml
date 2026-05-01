@@ -56,4 +56,3 @@ deploy:
     - ssh ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && yarn install --production && yarn build && pm2 restart expense-tracker || pm2 start dist/index.js --name expense-tracker"
   only:
     - main
-  when: manual
