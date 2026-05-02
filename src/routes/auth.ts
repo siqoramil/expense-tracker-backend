@@ -3,8 +3,15 @@ import type { FastifyPluginAsync } from 'fastify';
 import { OAuth2Client } from 'google-auth-library';
 import { env } from '../lib/env.js';
 import { generateCode, sendVerificationCode } from '../lib/mailer.js';
+import { Budget } from '../models/Budget.js';
+import { Category } from '../models/Category.js';
+import { Debt } from '../models/Debt.js';
+import { Notification } from '../models/Notification.js';
+import { Recurring } from '../models/Recurring.js';
+import { Transaction } from '../models/Transaction.js';
 import { User } from '../models/User.js';
 import { VerificationCode } from '../models/VerificationCode.js';
+import { Wallet } from '../models/Wallet.js';
 
 const googleAudiences = [
   env.google.webClientId,
@@ -199,6 +206,85 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (req.body.prefs && user.prefs) Object.assign(user.prefs, req.body.prefs);
       await user.save();
       return { user: toUserDTO(user) };
+    },
+  );
+
+  app.post(
+    '/account/request-delete',
+    { ...codeLimit, preHandler: app.auth },
+    async (req, reply) => {
+      const user = await User.findById(req.user.sub);
+      if (!user) return reply.code(404).send({ error: 'not_found' });
+
+      await VerificationCode.deleteMany({
+        userId: user._id,
+        purpose: 'account_delete',
+        consumed: false,
+      });
+
+      const code = generateCode();
+      await VerificationCode.create({
+        email: user.email,
+        code,
+        purpose: 'account_delete',
+        userId: user._id,
+        expiresAt: new Date(Date.now() + CODE_TTL_MS),
+      });
+
+      await sendVerificationCode(user.email, code, 'account deletion');
+      return { sent: true, expiresInSeconds: CODE_TTL_MS / 1000 };
+    },
+  );
+
+  app.post<{ Body: { code: string } }>(
+    '/account/confirm-delete',
+    {
+      ...tightLimit,
+      preHandler: app.auth,
+      schema: {
+        body: {
+          type: 'object',
+          required: ['code'],
+          properties: { code: { type: 'string', pattern: '^[0-9]{6}$' } },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const user = await User.findById(req.user.sub);
+      if (!user) return reply.code(404).send({ error: 'not_found' });
+
+      const record = await VerificationCode.findOne({
+        userId: user._id,
+        purpose: 'account_delete',
+        consumed: false,
+        expiresAt: { $gt: new Date() },
+      }).sort({ createdAt: -1 });
+
+      if (!record) return reply.code(400).send({ error: 'code_expired' });
+      if (record.attempts >= MAX_ATTEMPTS) {
+        return reply.code(429).send({ error: 'too_many_attempts' });
+      }
+      if (record.code !== req.body.code) {
+        record.attempts += 1;
+        await record.save();
+        return reply.code(400).send({ error: 'invalid_code' });
+      }
+
+      const userId = user._id;
+      await Promise.all([
+        Transaction.deleteMany({ userId }),
+        Budget.deleteMany({ userId }),
+        Category.deleteMany({ userId }),
+        Debt.deleteMany({ userId }),
+        Notification.deleteMany({ userId }),
+        Recurring.deleteMany({ userId }),
+        Wallet.deleteMany({ userId }),
+        VerificationCode.deleteMany({ userId }),
+      ]);
+      await user.deleteOne();
+
+      return reply.code(204).send();
     },
   );
 

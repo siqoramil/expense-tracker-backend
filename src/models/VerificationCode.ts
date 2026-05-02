@@ -6,7 +6,7 @@ const schema = new Schema(
     code: { type: String, required: true },
     purpose: {
       type: String,
-      enum: ['email_change', 'password_reset'],
+      enum: ['email_change', 'password_reset', 'account_delete'],
       required: true,
     },
     userId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
