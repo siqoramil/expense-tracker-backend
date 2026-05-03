@@ -1,5 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import mongoose from 'mongoose';
+import {
+  errorResponse,
+  itemResponse,
+  itemsResponse,
+  okResponse,
+  transactionEntity,
+} from '../lib/schemas.js';
 import { Transaction } from '../models/Transaction.js';
 import { Wallet } from '../models/Wallet.js';
 
@@ -42,6 +49,17 @@ const txBodySchema = {
   additionalProperties: false,
 } as const;
 
+const statsResponse = {
+  type: 'object',
+  required: ['income', 'expense', 'net', 'count'],
+  properties: {
+    income: { type: 'number', description: 'Sum of income amounts.' },
+    expense: { type: 'number', description: 'Sum of expense amounts.' },
+    net: { type: 'number', description: 'income − expense.' },
+    count: { type: 'integer', description: 'Total transactions in the month.' },
+  },
+} as const;
+
 const transactionsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
 
@@ -49,13 +67,24 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        summary: 'List transactions',
+        description:
+          'Returns the user\'s transactions, optionally filtered by month (YYYY-MM) and/or kind.',
         querystring: {
           type: 'object',
           properties: {
-            month: { type: 'string', pattern: MONTH_RX.source },
+            month: {
+              type: 'string',
+              pattern: MONTH_RX.source,
+              description: 'Filter to a single month (e.g. "2026-05").',
+            },
             kind: { type: 'string', enum: ['income', 'expense'] },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: itemsResponse(transactionEntity),
+          401: errorResponse,
         },
       },
     },
@@ -75,9 +104,18 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        summary: 'Create transaction',
+        description:
+          'Creates a transaction and atomically updates the wallet balance.',
         body: {
           ...txBodySchema,
           required: ['kind', 'cat', 'wallet', 'amount', 'date'],
+        },
+        response: {
+          200: itemResponse(transactionEntity),
+          400: errorResponse,
+          401: errorResponse,
+          404: errorResponse,
         },
       },
     },
@@ -110,12 +148,20 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        summary: 'Update transaction',
+        description:
+          'Updates a transaction and atomically reverses the previous wallet effect before applying the new one.',
         params: {
           type: 'object',
           properties: { id: { type: 'string', pattern: OBJECT_ID_RX.source } },
           required: ['id'],
         },
         body: txBodySchema,
+        response: {
+          200: itemResponse(transactionEntity),
+          401: errorResponse,
+          404: errorResponse,
+        },
       },
     },
     async (req, reply) => {
@@ -167,10 +213,18 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        summary: 'Delete transaction',
+        description:
+          'Deletes a transaction and atomically reverses its effect on the wallet balance.',
         params: {
           type: 'object',
           properties: { id: { type: 'string', pattern: OBJECT_ID_RX.source } },
           required: ['id'],
+        },
+        response: {
+          200: okResponse,
+          401: errorResponse,
+          404: errorResponse,
         },
       },
     },
@@ -205,10 +259,22 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/stats/:month',
     {
       schema: {
+        summary: 'Monthly transaction stats',
+        description: 'Aggregates income, expense, net, and count for the given month.',
         params: {
           type: 'object',
-          properties: { month: { type: 'string', pattern: MONTH_RX.source } },
+          properties: {
+            month: {
+              type: 'string',
+              pattern: MONTH_RX.source,
+              description: 'YYYY-MM',
+            },
+          },
           required: ['month'],
+        },
+        response: {
+          200: statsResponse,
+          401: errorResponse,
         },
       },
     },

@@ -57,7 +57,27 @@ export const buildApp = async () => {
   await app.register(authPlugin);
   await app.register(swaggerPlugin);
 
-  app.get('/health', async () => ({ ok: true, ts: Date.now() }));
+  app.get(
+    '/health',
+    {
+      schema: {
+        tags: ['System'],
+        summary: 'Health check',
+        description: 'Liveness probe. Returns ok and a server timestamp.',
+        response: {
+          200: {
+            type: 'object',
+            required: ['ok', 'ts'],
+            properties: {
+              ok: { type: 'boolean', const: true },
+              ts: { type: 'number', description: 'Server unix epoch ms.' },
+            },
+          },
+        },
+      },
+    },
+    async () => ({ ok: true, ts: Date.now() }),
+  );
 
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(categoriesRoutes, { prefix: '/categories' });

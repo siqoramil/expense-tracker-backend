@@ -1,26 +1,41 @@
 import type { FastifyPluginAsync } from 'fastify';
+import {
+  budgetEntity,
+  errorResponse,
+  idParams,
+  itemResponse,
+  itemsResponse,
+  okResponse,
+} from '../lib/schemas.js';
 import { Budget } from '../models/Budget.js';
-
-const OBJECT_ID = '^[0-9a-fA-F]{24}$';
-
-const idParams = {
-  type: 'object',
-  properties: { id: { type: 'string', pattern: OBJECT_ID } },
-  required: ['id'],
-} as const;
 
 const budgetsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
 
-  app.get('/', async (req) => {
-    const items = await Budget.find({ userId: req.user.sub }).sort({ createdAt: 1 });
-    return { items };
-  });
+  app.get(
+    '/',
+    {
+      schema: {
+        summary: 'List budgets',
+        description: "Returns all budgets owned by the authenticated user.",
+        response: {
+          200: itemsResponse(budgetEntity),
+          401: errorResponse,
+        },
+      },
+    },
+    async (req) => {
+      const items = await Budget.find({ userId: req.user.sub }).sort({ createdAt: 1 });
+      return { items };
+    },
+  );
 
   app.post<{ Body: { cat: string; limit: number } }>(
     '/',
     {
       schema: {
+        summary: 'Create budget',
+        description: 'Creates a per-category spending limit.',
         body: {
           type: 'object',
           required: ['cat', 'limit'],
@@ -29,6 +44,11 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
             limit: { type: 'number', minimum: 0, maximum: 1e12 },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: itemResponse(budgetEntity),
+          400: errorResponse,
+          401: errorResponse,
         },
       },
     },
@@ -42,11 +62,18 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        summary: 'Update budget',
+        description: 'Updates the spending limit on an existing budget.',
         params: idParams,
         body: {
           type: 'object',
           properties: { limit: { type: 'number', minimum: 0, maximum: 1e12 } },
           additionalProperties: false,
+        },
+        response: {
+          200: itemResponse(budgetEntity),
+          401: errorResponse,
+          404: errorResponse,
         },
       },
     },
@@ -63,7 +90,18 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete<{ Params: { id: string } }>(
     '/:id',
-    { schema: { params: idParams } },
+    {
+      schema: {
+        summary: 'Delete budget',
+        description: 'Permanently deletes a budget owned by the user.',
+        params: idParams,
+        response: {
+          200: okResponse,
+          401: errorResponse,
+          404: errorResponse,
+        },
+      },
+    },
     async (req, reply) => {
       const res = await Budget.deleteOne({ _id: req.params.id, userId: req.user.sub });
       if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });

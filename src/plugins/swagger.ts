@@ -20,6 +20,23 @@ const tagFromUrl = (url: string): string => {
   return map[seg] ?? seg;
 };
 
+// Endpoints that do NOT require a bearer token. Anything not listed here
+// gets `security: [{ bearerAuth: [] }]` injected automatically.
+const PUBLIC_ROUTES: Record<string, ReadonlySet<string>> = {
+  GET: new Set(['/health']),
+  POST: new Set([
+    '/auth/register',
+    '/auth/login',
+    '/auth/google',
+    '/auth/password/forgot',
+    '/auth/password/verify-code',
+    '/auth/password/reset',
+  ]),
+};
+
+const isPublic = (method: string, url: string): boolean =>
+  PUBLIC_ROUTES[method.toUpperCase()]?.has(url) ?? false;
+
 const swaggerPlugin = async (app: FastifyInstance) => {
   await app.register(swagger, {
     openapi: {
@@ -38,10 +55,29 @@ const swaggerPlugin = async (app: FastifyInstance) => {
           },
         },
       },
+      tags: [
+        { name: 'Auth', description: 'Account, sessions, and credential management.' },
+        { name: 'Categories', description: 'Spending / income categories.' },
+        { name: 'Wallets', description: 'User wallets and balances.' },
+        { name: 'Transactions', description: 'Income and expense entries.' },
+        { name: 'Debts', description: 'Money owed to or by the user.' },
+        { name: 'Budgets', description: 'Per-category spending limits.' },
+        { name: 'Recurring', description: 'Scheduled recurring entries.' },
+        { name: 'Notifications', description: 'In-app notifications.' },
+        { name: 'System', description: 'Service health and meta endpoints.' },
+      ],
     },
-    transform: ({ schema, url }) => {
-      const next = { ...(schema ?? {}) } as Record<string, unknown>;
+    transform: ({ schema, url, route }) => {
+      const next: Record<string, unknown> = { ...(schema ?? {}) };
       if (!next.tags) next.tags = [tagFromUrl(url)];
+
+      const methods = Array.isArray(route.method)
+        ? route.method
+        : [route.method];
+      const allPublic = methods.every((m) => isPublic(String(m), url));
+      if (!allPublic && !next.security) {
+        next.security = [{ bearerAuth: [] }];
+      }
       return { schema: next as typeof schema, url };
     },
   });

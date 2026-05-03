@@ -1,13 +1,13 @@
 import type { FastifyPluginAsync } from 'fastify';
+import {
+  errorResponse,
+  idParams,
+  itemResponse,
+  itemsResponse,
+  okResponse,
+  walletEntity,
+} from '../lib/schemas.js';
 import { Wallet } from '../models/Wallet.js';
-
-const OBJECT_ID = '^[0-9a-fA-F]{24}$';
-
-const idParams = {
-  type: 'object',
-  properties: { id: { type: 'string', pattern: OBJECT_ID } },
-  required: ['id'],
-} as const;
 
 const walletShape = {
   type: 'object',
@@ -37,16 +37,38 @@ type WalletBody = {
 const walletsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
 
-  app.get('/', async (req) => {
-    const items = await Wallet.find({ userId: req.user.sub }).sort({ createdAt: 1 });
-    return { items };
-  });
+  app.get(
+    '/',
+    {
+      schema: {
+        summary: 'List wallets',
+        description:
+          "Returns every wallet owned by the authenticated user, in creation order.",
+        response: {
+          200: itemsResponse(walletEntity),
+          401: errorResponse,
+        },
+      },
+    },
+    async (req) => {
+      const items = await Wallet.find({ userId: req.user.sub }).sort({ createdAt: 1 });
+      return { items };
+    },
+  );
 
   app.post<{ Body: WalletBody }>(
     '/',
     {
       schema: {
+        summary: 'Create wallet',
+        description:
+          'Creates a new wallet (cash, card, etc.) with bilingual name, icon, and color.',
         body: { ...walletShape, required: ['name', 'icon', 'color'] },
+        response: {
+          200: itemResponse(walletEntity),
+          400: errorResponse,
+          401: errorResponse,
+        },
       },
     },
     async (req) => {
@@ -57,7 +79,20 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
 
   app.patch<{ Params: { id: string }; Body: WalletBody }>(
     '/:id',
-    { schema: { params: idParams, body: walletShape } },
+    {
+      schema: {
+        summary: 'Update wallet',
+        description:
+          'Patches one or more fields on an existing wallet. The balance can be set directly here; transactions will continue to mutate it.',
+        params: idParams,
+        body: walletShape,
+        response: {
+          200: itemResponse(walletEntity),
+          401: errorResponse,
+          404: errorResponse,
+        },
+      },
+    },
     async (req, reply) => {
       const wallet = await Wallet.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
@@ -71,7 +106,19 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete<{ Params: { id: string } }>(
     '/:id',
-    { schema: { params: idParams } },
+    {
+      schema: {
+        summary: 'Delete wallet',
+        description:
+          "Permanently deletes a wallet. Transactions that referenced this wallet keep their reference but the wallet record is gone.",
+        params: idParams,
+        response: {
+          200: okResponse,
+          401: errorResponse,
+          404: errorResponse,
+        },
+      },
+    },
     async (req, reply) => {
       const res = await Wallet.deleteOne({ _id: req.params.id, userId: req.user.sub });
       if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });

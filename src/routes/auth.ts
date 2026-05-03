@@ -3,6 +3,13 @@ import type { FastifyPluginAsync } from 'fastify';
 import { OAuth2Client } from 'google-auth-library';
 import { env } from '../lib/env.js';
 import { generateCode, sendVerificationCode } from '../lib/mailer.js';
+import {
+  authResponse,
+  codeSentResponse,
+  errorResponse,
+  okResponse,
+  userResponse,
+} from '../lib/schemas.js';
 import { Budget } from '../models/Budget.js';
 import { Category } from '../models/Category.js';
 import { Debt } from '../models/Debt.js';
@@ -46,15 +53,29 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     {
       ...tightLimit,
       schema: {
+        summary: 'Register a new account',
+        description:
+          'Creates a user with email/password credentials. Returns a signed JWT and the user profile. Rate limited to 10 req/min per IP.',
         body: {
           type: 'object',
           required: ['email', 'password', 'name'],
           properties: {
             email: { type: 'string', format: 'email', maxLength: 200 },
-            password: { type: 'string', pattern: PASSWORD_PATTERN, maxLength: 128 },
+            password: {
+              type: 'string',
+              pattern: PASSWORD_PATTERN,
+              maxLength: 128,
+              description: '≥ 8 chars; must contain at least one letter and one digit.',
+            },
             name: { type: 'string', minLength: 1, maxLength: 80 },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: authResponse,
+          400: errorResponse,
+          409: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -76,6 +97,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     {
       ...tightLimit,
       schema: {
+        summary: 'Sign in with email + password',
+        description:
+          'Authenticates an existing user. Returns a signed JWT and the user profile on success. Rate limited to 10 req/min per IP.',
         body: {
           type: 'object',
           required: ['email', 'password'],
@@ -84,6 +108,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             password: { type: 'string', maxLength: 128 },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: authResponse,
+          400: errorResponse,
+          401: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -105,11 +135,28 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     {
       ...tightLimit,
       schema: {
+        summary: 'Sign in with Google',
+        description:
+          "Verifies a Google ID token, then creates or links a local user account and returns a signed JWT. Returns 503 when Google sign-in isn't configured on the server.",
         body: {
           type: 'object',
           required: ['idToken'],
-          properties: { idToken: { type: 'string', minLength: 20, maxLength: 4096 } },
+          properties: {
+            idToken: {
+              type: 'string',
+              minLength: 20,
+              maxLength: 4096,
+              description: 'Google-issued ID token from the client SDK.',
+            },
+          },
           additionalProperties: false,
+        },
+        response: {
+          200: authResponse,
+          400: errorResponse,
+          401: errorResponse,
+          429: errorResponse,
+          503: errorResponse,
         },
       },
     },
@@ -165,25 +212,54 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  app.get('/me', { preHandler: app.auth }, async (req, reply) => {
-    const user = await User.findById(req.user.sub);
-    if (!user) return reply.code(404).send({ error: 'not_found' });
-    return { user: toUserDTO(user) };
-  });
+  app.get(
+    '/me',
+    {
+      preHandler: app.auth,
+      schema: {
+        summary: 'Get current user',
+        description: 'Returns the profile of the authenticated user.',
+        response: {
+          200: userResponse,
+          401: errorResponse,
+          404: errorResponse,
+        },
+      },
+    },
+    async (req, reply) => {
+      const user = await User.findById(req.user.sub);
+      if (!user) return reply.code(404).send({ error: 'not_found' });
+      return { user: toUserDTO(user) };
+    },
+  );
 
   app.patch<{ Body: Partial<{ name: string; avatar: string; prefs: Record<string, unknown> }> }>(
     '/me',
     {
       preHandler: app.auth,
       schema: {
+        summary: 'Update current user',
+        description:
+          "Patches the user's name, avatar, and/or preferences. Avatars must be empty, 1–2 char initials, an https URL, or a base64 data URI for jpeg/png/webp/gif (SVG is rejected).",
         body: {
           type: 'object',
           properties: {
             name: { type: 'string', minLength: 1, maxLength: 80 },
-            avatar: { type: 'string', maxLength: 8_000_000 },
+            avatar: {
+              type: 'string',
+              maxLength: 8_000_000,
+              description:
+                'Initials, https URL, or base64 image data URI (jpeg/png/webp/gif).',
+            },
             prefs: { type: 'object', additionalProperties: true },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: userResponse,
+          400: errorResponse,
+          401: errorResponse,
+          404: errorResponse,
         },
       },
     },
@@ -211,7 +287,21 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
   app.post(
     '/account/request-delete',
-    { ...codeLimit, preHandler: app.auth },
+    {
+      ...codeLimit,
+      preHandler: app.auth,
+      schema: {
+        summary: 'Request account deletion code',
+        description:
+          'Generates a 6-digit code, emails it to the account owner, and stores it for confirmation. Codes expire after 10 minutes. Rate limited to 5 req/min per IP.',
+        response: {
+          200: codeSentResponse,
+          401: errorResponse,
+          404: errorResponse,
+          429: errorResponse,
+        },
+      },
+    },
     async (req, reply) => {
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
@@ -242,11 +332,27 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       ...tightLimit,
       preHandler: app.auth,
       schema: {
+        summary: 'Confirm account deletion',
+        description:
+          'Verifies the 6-digit code from /account/request-delete and permanently deletes the user along with all of their data (transactions, budgets, categories, debts, notifications, recurring entries, wallets, verification codes). Returns 204 on success. Locked after 5 failed attempts.',
         body: {
           type: 'object',
           required: ['code'],
-          properties: { code: { type: 'string', pattern: '^[0-9]{6}$' } },
+          properties: {
+            code: {
+              type: 'string',
+              pattern: '^[0-9]{6}$',
+              description: '6-digit numeric code emailed to the user.',
+            },
+          },
           additionalProperties: false,
+        },
+        response: {
+          204: { type: 'null', description: 'Account and all data deleted.' },
+          400: errorResponse,
+          401: errorResponse,
+          404: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -294,11 +400,24 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       ...codeLimit,
       preHandler: app.auth,
       schema: {
+        summary: 'Request email change code',
+        description:
+          'Sends a 6-digit code to the proposed new email address so the user can prove ownership. Codes expire after 10 minutes. Rate limited to 5 req/min per IP.',
         body: {
           type: 'object',
           required: ['newEmail'],
-          properties: { newEmail: { type: 'string', format: 'email', maxLength: 200 } },
+          properties: {
+            newEmail: { type: 'string', format: 'email', maxLength: 200 },
+          },
           additionalProperties: false,
+        },
+        response: {
+          200: codeSentResponse,
+          400: errorResponse,
+          401: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -337,11 +456,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       ...tightLimit,
       preHandler: app.auth,
       schema: {
+        summary: 'Verify email change',
+        description:
+          'Confirms the 6-digit code emailed to the new address and updates the user record. Locked after 5 failed attempts.',
         body: {
           type: 'object',
           required: ['code'],
           properties: { code: { type: 'string', pattern: '^[0-9]{6}$' } },
           additionalProperties: false,
+        },
+        response: {
+          200: userResponse,
+          400: errorResponse,
+          401: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -386,11 +516,21 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     {
       ...codeLimit,
       schema: {
+        summary: 'Send password reset code',
+        description:
+          "Sends a 6-digit reset code to the email if an account exists. The response is identical whether or not the email is registered, to avoid leaking account existence. Rate limited to 5 req/min per IP.",
         body: {
           type: 'object',
           required: ['email'],
-          properties: { email: { type: 'string', format: 'email', maxLength: 200 } },
+          properties: {
+            email: { type: 'string', format: 'email', maxLength: 200 },
+          },
           additionalProperties: false,
+        },
+        response: {
+          200: codeSentResponse,
+          400: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -422,6 +562,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     {
       ...tightLimit,
       schema: {
+        summary: 'Verify password reset code',
+        description:
+          "Checks that the supplied reset code is valid for the given email — does not consume it. Useful for two-step UIs where the user enters the code before typing a new password. Locked after 5 failed attempts.",
         body: {
           type: 'object',
           required: ['email', 'code'],
@@ -430,6 +573,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             code: { type: 'string', pattern: '^[0-9]{6}$' },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: okResponse,
+          400: errorResponse,
+          429: errorResponse,
         },
       },
     },
@@ -463,15 +611,28 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     {
       ...tightLimit,
       schema: {
+        summary: 'Reset password',
+        description:
+          "Verifies the reset code, replaces the user's password hash, consumes the code, and returns a fresh signed JWT with the user profile. Locked after 5 failed attempts.",
         body: {
           type: 'object',
           required: ['email', 'code', 'newPassword'],
           properties: {
             email: { type: 'string', format: 'email', maxLength: 200 },
             code: { type: 'string', pattern: '^[0-9]{6}$' },
-            newPassword: { type: 'string', pattern: PASSWORD_PATTERN, maxLength: 128 },
+            newPassword: {
+              type: 'string',
+              pattern: PASSWORD_PATTERN,
+              maxLength: 128,
+              description: '≥ 8 chars; must contain at least one letter and one digit.',
+            },
           },
           additionalProperties: false,
+        },
+        response: {
+          200: authResponse,
+          400: errorResponse,
+          429: errorResponse,
         },
       },
     },
