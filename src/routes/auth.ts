@@ -348,7 +348,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           additionalProperties: false,
         },
         response: {
-          204: { type: 'null', description: 'Account and all data deleted.' },
+          204: { type: 'object', description: 'Account and all data deleted.' },
           400: errorResponse,
           401: errorResponse,
           404: errorResponse,
