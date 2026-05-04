@@ -8,6 +8,7 @@ const tagFromUrl = (url: string): string => {
   if (!seg) return 'default';
   const map: Record<string, string> = {
     auth: 'Auth',
+    account: 'Auth',
     categories: 'Categories',
     wallets: 'Wallets',
     tx: 'Transactions',
