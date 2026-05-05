@@ -20,6 +20,10 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
   corsOrigins: parseList(process.env.CORS_ORIGINS),
   nodeEnv: process.env.NODE_ENV ?? 'development',
+  // Set to true behind a reverse proxy / TLS terminator that sets
+  // X-Forwarded-For. Off by default: trusting the header without a proxy
+  // would let any client spoof their source IP.
+  trustProxy: process.env.TRUST_PROXY === 'true',
   google: {
     webClientId: process.env.GOOGLE_WEB_CLIENT_ID ?? '',
     iosClientId: process.env.GOOGLE_IOS_CLIENT_ID ?? '',

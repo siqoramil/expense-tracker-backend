@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
-import mongoose from 'mongoose';
+import { withMaybeTransaction } from '../lib/db-tx.js';
 import {
   errorResponse,
   itemResponse,
@@ -120,10 +120,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-    const session = await mongoose.startSession();
-    try {
-      let tx;
-      await session.withTransaction(async () => {
+      const tx = await withMaybeTransaction(async (session) => {
         const wallet = await Wallet.findOne(
           { _id: req.body.wallet, userId: req.user.sub },
           null,
@@ -131,18 +128,15 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         );
         if (!wallet) throw reply.code(404).send({ error: 'wallet_not_found' });
         wallet.balance += delta(req.body.kind, req.body.amount);
-        await wallet.save({ session });
+        await wallet.save({ session: session ?? undefined });
         const [created] = await Transaction.create(
           [{ ...req.body, userId: req.user.sub }],
-          { session },
+          { session: session ?? undefined },
         );
-        tx = created;
+        return created;
       });
       return { item: tx };
-    } finally {
-      await session.endSession();
-    }
-  });
+    });
 
   app.patch<{ Params: { id: string }; Body: Partial<TxBody> }>(
     '/:id',
@@ -165,10 +159,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-    const session = await mongoose.startSession();
-    try {
-      let updated;
-      await session.withTransaction(async () => {
+      const updated = await withMaybeTransaction(async (session) => {
         const old = await Transaction.findOne(
           { _id: req.params.id, userId: req.user.sub },
           null,
@@ -186,7 +177,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         );
         if (oldWallet) {
           oldWallet.balance -= delta(old.kind, old.amount);
-          await oldWallet.save({ session });
+          await oldWallet.save({ session: session ?? undefined });
         }
         // Apply new wallet effect
         const newWallet = await Wallet.findOne(
@@ -196,18 +187,15 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         );
         if (newWallet) {
           newWallet.balance += delta(next.kind, next.amount);
-          await newWallet.save({ session });
+          await newWallet.save({ session: session ?? undefined });
         }
 
         Object.assign(old, req.body);
-        await old.save({ session });
-        updated = old;
+        await old.save({ session: session ?? undefined });
+        return old;
       });
       return { item: updated };
-    } finally {
-      await session.endSession();
-    }
-  });
+    });
 
   app.delete<{ Params: { id: string } }>(
     '/:id',
@@ -229,9 +217,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(async () => {
+      await withMaybeTransaction(async (session) => {
         const tx = await Transaction.findOne(
           { _id: req.params.id, userId: req.user.sub },
           null,
@@ -245,15 +231,12 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         );
         if (wallet) {
           wallet.balance -= delta(tx.kind, tx.amount);
-          await wallet.save({ session });
+          await wallet.save({ session: session ?? undefined });
         }
-        await tx.deleteOne({ session });
+        await tx.deleteOne({ session: session ?? undefined });
       });
       return { ok: true };
-    } finally {
-      await session.endSession();
-    }
-  });
+    });
 
   app.get<{ Params: { month: string } }>(
     '/stats/:month',

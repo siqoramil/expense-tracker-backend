@@ -9,13 +9,6 @@ import {
 } from '../lib/schemas.js';
 import { Notification } from '../models/Notification.js';
 
-type NotifBody = {
-  title: string;
-  body?: string;
-  kind?: string;
-  date?: string;
-};
-
 const notificationsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
 
@@ -38,35 +31,11 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  app.post<{ Body: NotifBody }>(
-    '/',
-    {
-      schema: {
-        summary: 'Create notification',
-        description: 'Creates a new in-app notification record for the user.',
-        body: {
-          type: 'object',
-          required: ['title'],
-          properties: {
-            title: { type: 'string', minLength: 1, maxLength: 200 },
-            body: { type: 'string', maxLength: 1000 },
-            kind: { type: 'string', maxLength: 40 },
-            date: { type: 'string', format: 'date-time' },
-          },
-          additionalProperties: false,
-        },
-        response: {
-          200: itemResponse(notificationEntity),
-          400: errorResponse,
-          401: errorResponse,
-        },
-      },
-    },
-    async (req) => {
-      const item = await Notification.create({ ...req.body, userId: req.user.sub });
-      return { item };
-    },
-  );
+  // POST / used to allow client-side creation of notifications. Removed:
+  // notifications represent server-side events (overdue debts, budget
+  // breaches, scheduled bills, recurring income) and must originate from
+  // the server. Letting clients craft their own notifications would let
+  // a compromised device fabricate alerts to social-engineer the user.
 
   app.post<{ Params: { id: string } }>(
     '/:id/read',

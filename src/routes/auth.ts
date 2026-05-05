@@ -37,11 +37,23 @@ const initialsFrom = (name: string) =>
     .join('')
     .toUpperCase();
 
+// Mongo emits code 11000 on a unique-index violation. Mongoose can also wrap
+// the driver error as a ValidationError with a nested cause, so check both.
+const isDuplicateKeyError = (err: unknown): boolean => {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: number; cause?: { code?: number } };
+  return e.code === 11000 || e.cause?.code === 11000;
+};
+
 const CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
 // At least 8 chars, must contain a letter and a digit.
 const PASSWORD_PATTERN = '^(?=.*[A-Za-z])(?=.*\\d).{8,128}$';
+
+// 2026 baseline. 10 rounds is ~10x faster on modern GPUs than it was in
+// 2015; 12 keeps brute-force costs in the tens-of-ms range per guess.
+const BCRYPT_ROUNDS = 12;
 
 // Strict rate limits for credential-touching routes.
 const tightLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
@@ -80,15 +92,23 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-      const { email, password, name } = req.body;
-      const existing = await User.findOne({ email: email.toLowerCase() });
+      const { password, name } = req.body;
+      const email = req.body.email.toLowerCase().trim();
+      const existing = await User.findOne({ email });
       if (existing) return reply.code(409).send({ error: 'email_taken' });
 
-      const passwordHash = await bcrypt.hash(password, 10);
+      const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
       const avatar = initialsFrom(name);
-      const user = await User.create({ email, passwordHash, name, avatar });
-      const token = app.jwt.sign({ sub: user.id });
-      return { token, user: toUserDTO(user) };
+      try {
+        const user = await User.create({ email, passwordHash, name, avatar });
+        const token = app.jwt.sign({ sub: user.id });
+        return { token, user: toUserDTO(user) };
+      } catch (err) {
+        if (isDuplicateKeyError(err)) {
+          return reply.code(409).send({ error: 'email_taken' });
+        }
+        throw err;
+      }
     },
   );
 
@@ -118,8 +138,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-      const { email, password } = req.body;
-      const user = await User.findOne({ email: email.toLowerCase() });
+      const { password } = req.body;
+      const email = req.body.email.toLowerCase().trim();
+      const user = await User.findOne({ email });
       if (!user || !user.passwordHash) {
         return reply.code(401).send({ error: 'invalid_credentials' });
       }
@@ -181,34 +202,114 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ error: 'email_not_verified' });
       }
 
-      const email = payload.email.toLowerCase();
+      const email = payload.email.toLowerCase().trim();
       const name = payload.name || payload.given_name || email.split('@')[0];
       const picture = payload.picture ?? '';
 
-      let user = await User.findOne({ $or: [{ googleId: payload.sub }, { email }] });
+      // Look up by googleId only — never auto-link a Google sub onto an
+      // existing password-only account by email match. That used to enable
+      // an account-takeover: if user A registered "victim@x.com" with a
+      // password (without owning the inbox), the real Google owner could
+      // sign in and silently take over. Linking now requires an explicit
+      // step at /auth/google/link while logged into the password account.
+      let user = await User.findOne({ googleId: payload.sub });
       if (!user) {
-        user = await User.create({
-          email,
-          name,
-          googleId: payload.sub,
-          avatar: picture || initialsFrom(name),
-          passwordHash: '',
-        });
-      } else {
-        let dirty = false;
-        if (!user.googleId) {
-          user.googleId = payload.sub;
-          dirty = true;
+        const collision = await User.findOne({ email });
+        if (collision) {
+          return reply.code(409).send({ error: 'account_link_required' });
         }
-        if (!user.avatar && picture) {
-          user.avatar = picture;
-          dirty = true;
+        try {
+          user = await User.create({
+            email,
+            name,
+            googleId: payload.sub,
+            avatar: picture || initialsFrom(name),
+            passwordHash: '',
+          });
+        } catch (err) {
+          if (isDuplicateKeyError(err)) {
+            // Race: another request created a same-email account between
+            // our check and create. Fail closed and tell the client to
+            // perform an explicit link from the existing account.
+            return reply.code(409).send({ error: 'account_link_required' });
+          }
+          throw err;
         }
-        if (dirty) await user.save();
+      } else if (!user.avatar && picture) {
+        user.avatar = picture;
+        await user.save();
       }
 
       const token = app.jwt.sign({ sub: user.id });
       return { token, user: toUserDTO(user) };
+    },
+  );
+
+  // Explicit, authenticated linking of a Google identity onto the current
+  // account. The caller must already be signed in with their password and
+  // the Google ID token's email must match the account's email — both
+  // checks together close the auto-link takeover gap.
+  app.post<{ Body: { idToken: string } }>(
+    '/google/link',
+    {
+      ...tightLimit,
+      preHandler: app.auth,
+      schema: {
+        summary: 'Link Google to current account',
+        description:
+          "Attaches a Google sub to the authenticated user. The Google ID token's email must match the account's email. Returns 409 if the Google sub is already linked elsewhere.",
+        body: {
+          type: 'object',
+          required: ['idToken'],
+          properties: {
+            idToken: { type: 'string', minLength: 20, maxLength: 4096 },
+          },
+          additionalProperties: false,
+        },
+        response: {
+          200: userResponse,
+          400: errorResponse,
+          401: errorResponse,
+          409: errorResponse,
+          429: errorResponse,
+          503: errorResponse,
+        },
+      },
+    },
+    async (req, reply) => {
+      if (!googleClient || googleAudiences.length === 0) {
+        return reply.code(503).send({ error: 'google_auth_disabled' });
+      }
+      const user = await User.findById(req.user.sub);
+      if (!user) return reply.code(404).send({ error: 'not_found' });
+
+      let payload;
+      try {
+        const ticket = await googleClient.verifyIdToken({
+          idToken: req.body.idToken,
+          audience: googleAudiences,
+        });
+        payload = ticket.getPayload();
+      } catch {
+        return reply.code(401).send({ error: 'invalid_google_token' });
+      }
+      if (!payload?.email || !payload.sub) {
+        return reply.code(401).send({ error: 'invalid_google_token' });
+      }
+      if (payload.email_verified === false) {
+        return reply.code(401).send({ error: 'email_not_verified' });
+      }
+      if (payload.email.toLowerCase().trim() !== user.email) {
+        return reply.code(409).send({ error: 'email_mismatch' });
+      }
+      const already = await User.findOne({ googleId: payload.sub });
+      if (already && already.id !== user.id) {
+        return reply.code(409).send({ error: 'google_account_in_use' });
+      }
+      user.googleId = payload.sub;
+      if (!user.avatar && payload.picture) user.avatar = payload.picture;
+      await user.save();
+      return { user: toUserDTO(user) };
     },
   );
 
@@ -247,11 +348,27 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             name: { type: 'string', minLength: 1, maxLength: 80 },
             avatar: {
               type: 'string',
-              maxLength: 8_000_000,
+              // ~600KB ceiling: enough for the mobile picker's 0.3-quality
+              // 1:1 crops (~150-300KB base64) without bloating User docs.
+              // TODO: move to S3/CDN and store only a URL — Mongo's 16MB
+              // doc cap and oplog amplification make inline images a
+              // foot-gun at scale.
+              maxLength: 600_000,
               description:
-                'Initials, https URL, or base64 image data URI (jpeg/png/webp/gif).',
+                'Initials, https URL, or base64 image data URI (jpeg/png/webp/gif). Cap ~600KB.',
             },
-            prefs: { type: 'object', additionalProperties: true },
+            prefs: {
+              type: 'object',
+              properties: {
+                lang: { type: 'string', enum: ['en', 'uz', 'ru', 'de', 'fr', 'es'] },
+                currency: { type: 'string', enum: ['UZS', 'USD', 'EUR', 'GBP', 'RUB'] },
+                dark: { type: 'boolean' },
+                pin: { type: 'boolean' },
+                notifications: { type: 'boolean' },
+                biometric: { type: 'boolean' },
+              },
+              additionalProperties: false,
+            },
           },
           additionalProperties: false,
         },
@@ -326,7 +443,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  app.post<{ Body: { code: string } }>(
+  app.post<{ Body: { code: string; password?: string; idToken?: string } }>(
     '/account/confirm-delete',
     {
       ...tightLimit,
@@ -334,7 +451,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Confirm account deletion',
         description:
-          'Verifies the 6-digit code from /account/request-delete and permanently deletes the user along with all of their data (transactions, budgets, categories, debts, notifications, recurring entries, wallets, verification codes). Returns 204 on success. Locked after 5 failed attempts.',
+          "Verifies the 6-digit code from /account/request-delete AND re-authenticates the caller (password for password accounts, fresh Google ID token for Google-only accounts), then permanently deletes the user along with all of their data. Returns 204 on success. Locked after 5 failed attempts.",
         body: {
           type: 'object',
           required: ['code'],
@@ -343,6 +460,19 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               type: 'string',
               pattern: '^[0-9]{6}$',
               description: '6-digit numeric code emailed to the user.',
+            },
+            password: {
+              type: 'string',
+              maxLength: 128,
+              description:
+                'Current password. Required when the account has a password set.',
+            },
+            idToken: {
+              type: 'string',
+              minLength: 20,
+              maxLength: 4096,
+              description:
+                'Fresh Google ID token. Required when the account is Google-only (no password).',
             },
           },
           additionalProperties: false,
@@ -353,12 +483,47 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           401: errorResponse,
           404: errorResponse,
           429: errorResponse,
+          503: errorResponse,
         },
       },
     },
     async (req, reply) => {
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
+
+      // Re-auth: a stolen JWT plus a one-shot peek at the inbox must NOT be
+      // enough to wipe the account. Demand a credential the attacker is
+      // unlikely to also possess.
+      if (user.passwordHash) {
+        if (!req.body.password) {
+          return reply.code(400).send({ error: 'password_required' });
+        }
+        const ok = await bcrypt.compare(req.body.password, user.passwordHash);
+        if (!ok) return reply.code(401).send({ error: 'invalid_credentials' });
+      } else {
+        // Google-only account: require a fresh ID token whose sub matches
+        // the linked googleId. The ID token is signed by Google and short-
+        // lived, so possession proves current control of the Google login.
+        if (!googleClient || googleAudiences.length === 0) {
+          return reply.code(503).send({ error: 'google_auth_disabled' });
+        }
+        if (!req.body.idToken) {
+          return reply.code(400).send({ error: 'id_token_required' });
+        }
+        let payload;
+        try {
+          const ticket = await googleClient.verifyIdToken({
+            idToken: req.body.idToken,
+            audience: googleAudiences,
+          });
+          payload = ticket.getPayload();
+        } catch {
+          return reply.code(401).send({ error: 'invalid_google_token' });
+        }
+        if (!payload?.sub || payload.sub !== user.googleId) {
+          return reply.code(401).send({ error: 'invalid_google_token' });
+        }
+      }
 
       const record = await VerificationCode.findOne({
         userId: user._id,
@@ -504,8 +669,18 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       user.email = record.newEmail;
+      try {
+        await user.save();
+      } catch (err) {
+        // Race: another account claimed this email between the check and save.
+        // The unique index is the source of truth; surface a precise 409.
+        if (isDuplicateKeyError(err)) {
+          return reply.code(409).send({ error: 'email_taken' });
+        }
+        throw err;
+      }
       record.consumed = true;
-      await Promise.all([user.save(), record.save()]);
+      await record.save();
 
       return { user: toUserDTO(user) };
     },
@@ -658,7 +833,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({ error: 'invalid_code' });
       }
 
-      user.passwordHash = await bcrypt.hash(req.body.newPassword, 10);
+      user.passwordHash = await bcrypt.hash(req.body.newPassword, BCRYPT_ROUNDS);
+      // Bumping passwordChangedAt revokes every JWT issued before this
+      // moment — the auth preHandler refuses tokens whose iat is older.
+      user.passwordChangedAt = new Date();
       record.consumed = true;
       await Promise.all([user.save(), record.save()]);
 
@@ -675,6 +853,11 @@ const toUserDTO = (u: InstanceType<typeof User>) => ({
   avatar: u.avatar,
   pro: u.pro,
   prefs: u.prefs,
+  // Surfaces which credentials are configured so the client can pick the
+  // right re-auth flow (password vs fresh Google ID token) on sensitive
+  // actions like confirm-delete.
+  hasPassword: Boolean(u.passwordHash),
+  hasGoogle: Boolean(u.googleId),
 });
 
 export default authRoutes;

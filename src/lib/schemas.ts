@@ -68,6 +68,14 @@ export const userEntity = {
       description: 'Initials, https URL, or base64 data URI.',
     },
     pro: { type: 'boolean' },
+    hasPassword: {
+      type: 'boolean',
+      description: 'Whether the user can sign in with email + password.',
+    },
+    hasGoogle: {
+      type: 'boolean',
+      description: 'Whether a Google identity is linked to this account.',
+    },
     prefs: {
       type: 'object',
       properties: {

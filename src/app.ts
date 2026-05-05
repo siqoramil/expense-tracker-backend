@@ -19,6 +19,13 @@ export const buildApp = async () => {
   const isProd = env.nodeEnv === 'production';
   const app = Fastify({
     bodyLimit: 10 * 1024 * 1024,
+    // When TRUST_PROXY=true, Fastify reads X-Forwarded-For so per-IP rate
+    // limits don't lump every request behind the proxy onto one bucket.
+    trustProxy: env.trustProxy,
+    // Fastify v5 defaults to removeAdditional: 'all', which silently strips
+    // unknown body fields. That hides client typos and turns schema diffs into
+    // soft failures instead of 400s. We want strict validation everywhere.
+    ajv: { customOptions: { removeAdditional: false } },
     logger: {
       level: isProd ? 'info' : 'debug',
       transport: isProd
@@ -34,13 +41,20 @@ export const buildApp = async () => {
 
   // CORS: in dev, allow no-origin (mobile/native) and any localhost.
   // In prod, only whitelisted origins from env.corsOrigins are allowed.
+  //
+  // The dev allowlist must close the host portion before "/" or ":" — a
+  // naive prefix like "192.168." would also match "https://192.168.1evil.com".
+  // The `(?::\d+)?` accepts an optional port and `(?:$|/)` requires the host
+  // to actually end there.
+  const DEV_HOST_RX =
+    /^https?:\/\/(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2})(?::\d+)?(?:$|\/)/;
   await app.register(cors, {
     credentials: true,
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
       const allowed = env.corsOrigins;
       if (allowed.includes(origin)) return cb(null, true);
-      if (!isProd && /^https?:\/\/(localhost|127\.0\.0\.1|10\.|192\.168\.)/.test(origin)) {
+      if (!isProd && DEV_HOST_RX.test(origin)) {
         return cb(null, true);
       }
       return cb(new Error('cors_blocked'), false);
@@ -88,7 +102,7 @@ export const buildApp = async () => {
   await app.register(recurringRoutes, { prefix: '/recurring' });
   await app.register(notificationsRoutes, { prefix: '/notifs' });
 
-  app.setErrorHandler((err: Error & { statusCode?: number; validation?: unknown }, _req, reply) => {
+  app.setErrorHandler((err: Error & { statusCode?: number; validation?: unknown; validationContext?: string }, _req, reply) => {
     if (reply.sent) return;
     const status = err.statusCode ?? 500;
     if (status >= 500) {
@@ -96,11 +110,20 @@ export const buildApp = async () => {
       return reply.code(status).send({ error: 'internal_error' });
     }
     // Hide raw messages: only forward known short error codes (snake_case),
-    // strip stack/details. Validation errors get a generic code.
-    const safe =
-      err.validation || /[\s.<>:]/.test(err.message ?? '')
-        ? 'bad_request'
-        : err.message || 'error';
+    // strip stack/details. Validation errors get a generic code in prod,
+    // but include the structured details in non-prod so clients can debug
+    // schema mismatches without trial-and-error.
+    if (err.validation) {
+      if (isProd) {
+        return reply.code(status).send({ error: 'bad_request' });
+      }
+      return reply.code(status).send({
+        error: 'bad_request',
+        validation: err.validation,
+        validationContext: err.validationContext,
+      });
+    }
+    const safe = /[\s.<>:]/.test(err.message ?? '') ? 'bad_request' : err.message || 'error';
     return reply.code(status).send({ error: safe });
   });
 
