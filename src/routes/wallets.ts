@@ -9,7 +9,11 @@ import {
 } from '../lib/schemas.js';
 import { Wallet } from '../models/Wallet.js';
 
-const walletShape = {
+// POST accepts an initial `balance` to seed a wallet on creation. PATCH
+// deliberately omits it: ongoing balance changes must flow through /tx so
+// the wallet balance always reconciles with the sum of its transactions.
+// Allowing PATCH to set balance directly let clients drift the two apart.
+const walletCreateShape = {
   type: 'object',
   properties: {
     name: {
@@ -27,11 +31,34 @@ const walletShape = {
   additionalProperties: false,
 } as const;
 
-type WalletBody = {
+const walletPatchShape = {
+  type: 'object',
+  properties: {
+    name: {
+      type: 'object',
+      properties: {
+        en: { type: 'string', maxLength: 80 },
+        uz: { type: 'string', maxLength: 80 },
+      },
+      additionalProperties: false,
+    },
+    icon: { type: 'string', maxLength: 40 },
+    color: { type: 'string', maxLength: 40 },
+  },
+  additionalProperties: false,
+} as const;
+
+type WalletCreateBody = {
   name?: { en: string; uz: string };
   icon?: string;
   color?: string;
   balance?: number;
+};
+
+type WalletPatchBody = {
+  name?: { en: string; uz: string };
+  icon?: string;
+  color?: string;
 };
 
 const walletsRoutes: FastifyPluginAsync = async (app) => {
@@ -56,14 +83,14 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  app.post<{ Body: WalletBody }>(
+  app.post<{ Body: WalletCreateBody }>(
     '/',
     {
       schema: {
         summary: 'Create wallet',
         description:
-          'Creates a new wallet (cash, card, etc.) with bilingual name, icon, and color.',
-        body: { ...walletShape, required: ['name', 'icon', 'color'] },
+          'Creates a new wallet (cash, card, etc.) with bilingual name, icon, and color. An initial balance may be seeded here; subsequent changes must go through /tx.',
+        body: { ...walletCreateShape, required: ['name', 'icon', 'color'] },
         response: {
           200: itemResponse(walletEntity),
           400: errorResponse,
@@ -77,15 +104,15 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  app.patch<{ Params: { id: string }; Body: WalletBody }>(
+  app.patch<{ Params: { id: string }; Body: WalletPatchBody }>(
     '/:id',
     {
       schema: {
         summary: 'Update wallet',
         description:
-          'Patches one or more fields on an existing wallet. The balance can be set directly here; transactions will continue to mutate it.',
+          'Patches the name, icon, or color on an existing wallet. The balance is intentionally not accepted here — it is derived from /tx writes and must stay in sync.',
         params: idParams,
-        body: walletShape,
+        body: walletPatchShape,
         response: {
           200: itemResponse(walletEntity),
           401: errorResponse,

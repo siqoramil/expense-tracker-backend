@@ -18,7 +18,11 @@ import walletsRoutes from './routes/wallets.js';
 export const buildApp = async () => {
   const isProd = env.nodeEnv === 'production';
   const app = Fastify({
-    bodyLimit: 10 * 1024 * 1024,
+    // Default 1 MB is plenty for every route except PATCH /auth/me (which
+    // accepts a ~600 KB base64 avatar). That route opts into a larger
+    // bodyLimit locally. Keeping the global cap low limits DoS amplification:
+    // 200 req/min × 1 MB is bounded, vs 200 × 10 MB which was 2 GB/min/IP.
+    bodyLimit: 1 * 1024 * 1024,
     // When TRUST_PROXY=true, Fastify reads X-Forwarded-For so per-IP rate
     // limits don't lump every request behind the proxy onto one bucket.
     trustProxy: env.trustProxy,
@@ -69,7 +73,9 @@ export const buildApp = async () => {
 
   await app.register(mongoPlugin);
   await app.register(authPlugin);
-  await app.register(swaggerPlugin);
+  // Swagger UI / OpenAPI exposes the full route shape. Useful in dev for
+  // client work; in prod it's an attacker recon aid, so keep it off.
+  if (!isProd) await app.register(swaggerPlugin);
 
   app.get(
     '/health',

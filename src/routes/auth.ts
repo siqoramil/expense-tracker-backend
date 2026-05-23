@@ -338,6 +338,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     '/me',
     {
       preHandler: app.auth,
+      // Avatars can be a ~600 KB base64 data URI. The global bodyLimit is
+      // tightened to 1 MB, so this route opts into a slightly larger cap.
+      bodyLimit: 750_000,
       schema: {
         summary: 'Update current user',
         description:
@@ -567,7 +570,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Request email change code',
         description:
-          'Sends a 6-digit code to the proposed new email address so the user can prove ownership. Codes expire after 10 minutes. Rate limited to 5 req/min per IP.',
+          "Sends a 6-digit code to the proposed new email address so the user can prove ownership. The response is identical whether or not the target address is already registered, to avoid leaking account existence to an authenticated caller. Codes expire after 10 minutes. Rate limited to 5 req/min per IP.",
         body: {
           type: 'object',
           required: ['newEmail'],
@@ -581,7 +584,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           400: errorResponse,
           401: errorResponse,
           404: errorResponse,
-          409: errorResponse,
           429: errorResponse,
         },
       },
@@ -591,31 +593,38 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
       if (user.email === newEmail) return reply.code(400).send({ error: 'same_email' });
+
+      // Treat already-registered targets as a silent no-op: do NOT send a
+      // code and do NOT create a VerificationCode record. Returning the
+      // same { sent: true } shape either way denies an authenticated caller
+      // an oracle for enumerating other users' email addresses. The legit
+      // user discovers the conflict when verify-change rejects the code
+      // they never receive.
       const taken = await User.findOne({ email: newEmail });
-      if (taken) return reply.code(409).send({ error: 'email_taken' });
+      if (!taken) {
+        await VerificationCode.deleteMany({
+          userId: user._id,
+          purpose: 'email_change',
+          consumed: false,
+        });
 
-      await VerificationCode.deleteMany({
-        userId: user._id,
-        purpose: 'email_change',
-        consumed: false,
-      });
+        const code = generateCode();
+        await VerificationCode.create({
+          email: user.email,
+          newEmail,
+          code,
+          purpose: 'email_change',
+          userId: user._id,
+          expiresAt: new Date(Date.now() + CODE_TTL_MS),
+        });
 
-      const code = generateCode();
-      await VerificationCode.create({
-        email: user.email,
-        newEmail,
-        code,
-        purpose: 'email_change',
-        userId: user._id,
-        expiresAt: new Date(Date.now() + CODE_TTL_MS),
-      });
-
-      await sendVerificationCode(newEmail, code, 'email change');
+        await sendVerificationCode(newEmail, code, 'email change');
+      }
       return { sent: true, expiresInSeconds: CODE_TTL_MS / 1000 };
     },
   );
 
-  app.post<{ Body: { code: string } }>(
+  app.post<{ Body: { code: string; password?: string; idToken?: string } }>(
     '/email/verify-change',
     {
       ...tightLimit,
@@ -623,11 +632,24 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Verify email change',
         description:
-          'Confirms the 6-digit code emailed to the new address and updates the user record. Locked after 5 failed attempts.',
+          'Confirms the 6-digit code emailed to the new address AND re-authenticates the caller (password for password accounts, fresh Google ID token for Google-only accounts) before applying the change. A stolen JWT plus a one-time peek at the inbox must not be enough to take over the account. Locked after 5 failed attempts.',
         body: {
           type: 'object',
           required: ['code'],
-          properties: { code: { type: 'string', pattern: '^[0-9]{6}$' } },
+          properties: {
+            code: { type: 'string', pattern: '^[0-9]{6}$' },
+            password: {
+              type: 'string',
+              maxLength: 128,
+              description: 'Current password. Required when the account has a password set.',
+            },
+            idToken: {
+              type: 'string',
+              minLength: 20,
+              maxLength: 4096,
+              description: 'Fresh Google ID token. Required when the account is Google-only.',
+            },
+          },
           additionalProperties: false,
         },
         response: {
@@ -637,12 +659,44 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           404: errorResponse,
           409: errorResponse,
           429: errorResponse,
+          503: errorResponse,
         },
       },
     },
     async (req, reply) => {
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
+
+      // Re-auth: changing the login email is account-takeover-equivalent if
+      // the JWT is stolen and the attacker can sniff the new-email inbox.
+      // Demand a credential the attacker is unlikely to also possess.
+      if (user.passwordHash) {
+        if (!req.body.password) {
+          return reply.code(400).send({ error: 'password_required' });
+        }
+        const ok = await bcrypt.compare(req.body.password, user.passwordHash);
+        if (!ok) return reply.code(401).send({ error: 'invalid_credentials' });
+      } else {
+        if (!googleClient || googleAudiences.length === 0) {
+          return reply.code(503).send({ error: 'google_auth_disabled' });
+        }
+        if (!req.body.idToken) {
+          return reply.code(400).send({ error: 'id_token_required' });
+        }
+        let payload;
+        try {
+          const ticket = await googleClient.verifyIdToken({
+            idToken: req.body.idToken,
+            audience: googleAudiences,
+          });
+          payload = ticket.getPayload();
+        } catch {
+          return reply.code(401).send({ error: 'invalid_google_token' });
+        }
+        if (!payload?.sub || payload.sub !== user.googleId) {
+          return reply.code(401).send({ error: 'invalid_google_token' });
+        }
+      }
 
       const record = await VerificationCode.findOne({
         userId: user._id,
@@ -669,11 +723,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       user.email = record.newEmail;
+      // Email change is a credential-equivalent event — revoke prior JWTs so
+      // any session that observed the old email cannot continue under the
+      // new one without re-login.
+      user.passwordChangedAt = new Date();
       try {
         await user.save();
       } catch (err) {
-        // Race: another account claimed this email between the check and save.
-        // The unique index is the source of truth; surface a precise 409.
         if (isDuplicateKeyError(err)) {
           return reply.code(409).send({ error: 'email_taken' });
         }
