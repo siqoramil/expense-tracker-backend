@@ -40,7 +40,11 @@ const txBodySchema = {
   type: 'object',
   properties: {
     kind: { type: 'string', enum: ['income', 'expense'] },
-    cat: { type: 'string', minLength: 1, maxLength: 80 },
+    // cat is an ObjectId on the model (Schema.Types.ObjectId). Accepting
+    // a free-form string here let arbitrary input slip through to
+    // Mongoose, which then threw CastError → 500. Match the model so
+    // bad input is rejected at the edge with 400.
+    cat: { type: 'string', pattern: OBJECT_ID_RX.source },
     wallet: { type: 'string', pattern: OBJECT_ID_RX.source },
     amount: { type: 'number', minimum: 0, maximum: 1e12 },
     note: { type: 'string', maxLength: 500 },

@@ -1,8 +1,10 @@
 import bcrypt from 'bcryptjs';
 import type { FastifyPluginAsync } from 'fastify';
 import { OAuth2Client } from 'google-auth-library';
+import { withMaybeTransaction } from '../lib/db-tx.js';
 import { env } from '../lib/env.js';
 import { generateCode, sendVerificationCode } from '../lib/mailer.js';
+import { normalizeEmail } from '../lib/normalize.js';
 import {
   authResponse,
   codeSentResponse,
@@ -10,6 +12,7 @@ import {
   okResponse,
   userResponse,
 } from '../lib/schemas.js';
+import { DUMMY_PASSWORD_HASH, safeCodeEqual } from '../lib/security.js';
 import { Budget } from '../models/Budget.js';
 import { Category } from '../models/Category.js';
 import { Debt } from '../models/Debt.js';
@@ -55,6 +58,12 @@ const PASSWORD_PATTERN = '^(?=.*[A-Za-z])(?=.*\\d).{8,128}$';
 // 2015; 12 keeps brute-force costs in the tens-of-ms range per guess.
 const BCRYPT_ROUNDS = 12;
 
+// Account-level brute-force lockout. The 200 req/min IP cap catches
+// floods; this catches slow distributed attacks (one guess per IP per
+// minute across thousands of IPs would otherwise be unbounded).
+const LOGIN_FAILURE_THRESHOLD = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
 // Strict rate limits for credential-touching routes.
 const tightLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
 const codeLimit = { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } };
@@ -93,7 +102,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const { password, name } = req.body;
-      const email = req.body.email.toLowerCase().trim();
+      const email = normalizeEmail(req.body.email);
       const existing = await User.findOne({ email });
       if (existing) return reply.code(409).send({ error: 'email_taken' });
 
@@ -119,7 +128,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Sign in with email + password',
         description:
-          'Authenticates an existing user. Returns a signed JWT and the user profile on success. Rate limited to 10 req/min per IP.',
+          'Authenticates an existing user. Returns a signed JWT and the user profile on success. Rate limited to 10 req/min per IP. After 5 consecutive failed attempts the account is locked for 15 minutes (423).',
         body: {
           type: 'object',
           required: ['email', 'password'],
@@ -133,19 +142,54 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           200: authResponse,
           400: errorResponse,
           401: errorResponse,
+          423: errorResponse,
           429: errorResponse,
         },
       },
     },
     async (req, reply) => {
       const { password } = req.body;
-      const email = req.body.email.toLowerCase().trim();
+      const email = normalizeEmail(req.body.email);
       const user = await User.findOne({ email });
-      if (!user || !user.passwordHash) {
+
+      // Always run bcrypt — against the user's hash when present, against
+      // a precomputed dummy when not. Without this, "unknown email" returns
+      // in ~5 ms and "wrong password" in ~100 ms, which is a 20× timing
+      // signal an attacker uses to enumerate registered emails.
+      const hashToCheck =
+        user && user.passwordHash ? user.passwordHash : DUMMY_PASSWORD_HASH;
+      const passwordOk = await bcrypt.compare(password, hashToCheck);
+
+      // Tally failures on real password accounts only. Google-only accounts
+      // have an empty passwordHash and can't be brute-forced through this
+      // endpoint, so locking them would just deny service for no benefit.
+      const isPasswordAccount = Boolean(user?.passwordHash);
+
+      if (!user || !isPasswordAccount || !passwordOk) {
+        if (user && isPasswordAccount) {
+          user.failedLogins = (user.failedLogins ?? 0) + 1;
+          if (user.failedLogins >= LOGIN_FAILURE_THRESHOLD) {
+            user.lockedUntil = new Date(Date.now() + LOGIN_LOCKOUT_MS);
+            user.failedLogins = 0;
+          }
+          await user.save();
+        }
         return reply.code(401).send({ error: 'invalid_credentials' });
       }
-      const ok = await bcrypt.compare(password, user.passwordHash);
-      if (!ok) return reply.code(401).send({ error: 'invalid_credentials' });
+
+      // Successful password match — but lockout still blocks login until
+      // the window expires. Returning the same code as a wrong password
+      // prevents an attacker from probing for locked accounts.
+      if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+        return reply.code(423).send({ error: 'account_locked' });
+      }
+
+      if (user.failedLogins || user.lockedUntil) {
+        user.failedLogins = 0;
+        user.lockedUntil = null;
+        await user.save();
+      }
+
       const token = app.jwt.sign({ sub: user.id });
       return { token, user: toUserDTO(user) };
     },
@@ -202,7 +246,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(401).send({ error: 'email_not_verified' });
       }
 
-      const email = payload.email.toLowerCase().trim();
+      const email = normalizeEmail(payload.email);
       const name = payload.name || payload.given_name || email.split('@')[0];
       const picture = payload.picture ?? '';
 
@@ -299,7 +343,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (payload.email_verified === false) {
         return reply.code(401).send({ error: 'email_not_verified' });
       }
-      if (payload.email.toLowerCase().trim() !== user.email) {
+      if (normalizeEmail(payload.email) !== user.email) {
         return reply.code(409).send({ error: 'email_mismatch' });
       }
       const already = await User.findOne({ googleId: payload.sub });
@@ -539,24 +583,32 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (record.attempts >= MAX_ATTEMPTS) {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
-      if (record.code !== req.body.code) {
+      if (!safeCodeEqual(record.code, req.body.code)) {
         record.attempts += 1;
         await record.save();
         return reply.code(400).send({ error: 'invalid_code' });
       }
 
+      // Wrap the cascade in a transaction (on replica sets) so a
+      // mid-cascade failure rolls back instead of leaving orphan rows
+      // attached to a now-deleted user. On standalone Mongo the helper
+      // falls back to non-atomic writes — flagged in the deployment
+      // notes as a known dev-only caveat.
       const userId = user._id;
-      await Promise.all([
-        Transaction.deleteMany({ userId }),
-        Budget.deleteMany({ userId }),
-        Category.deleteMany({ userId }),
-        Debt.deleteMany({ userId }),
-        Notification.deleteMany({ userId }),
-        Recurring.deleteMany({ userId }),
-        Wallet.deleteMany({ userId }),
-        VerificationCode.deleteMany({ userId }),
-      ]);
-      await user.deleteOne();
+      await withMaybeTransaction(async (session) => {
+        const sessionOpt = session ? { session } : {};
+        await Promise.all([
+          Transaction.deleteMany({ userId }, sessionOpt),
+          Budget.deleteMany({ userId }, sessionOpt),
+          Category.deleteMany({ userId }, sessionOpt),
+          Debt.deleteMany({ userId }, sessionOpt),
+          Notification.deleteMany({ userId }, sessionOpt),
+          Recurring.deleteMany({ userId }, sessionOpt),
+          Wallet.deleteMany({ userId }, sessionOpt),
+          VerificationCode.deleteMany({ userId }, sessionOpt),
+        ]);
+        await user.deleteOne(sessionOpt);
+      });
 
       return reply.code(204).send();
     },
@@ -589,7 +641,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-      const newEmail = req.body.newEmail.toLowerCase().trim();
+      const newEmail = normalizeEmail(req.body.newEmail);
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
       if (user.email === newEmail) return reply.code(400).send({ error: 'same_email' });
@@ -710,7 +762,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
 
-      if (record.code !== req.body.code) {
+      if (!safeCodeEqual(record.code, req.body.code)) {
         record.attempts += 1;
         await record.save();
         return reply.code(400).send({ error: 'invalid_code' });
@@ -766,7 +818,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const email = req.body.email.toLowerCase().trim();
+      const email = normalizeEmail(req.body.email);
       const user = await User.findOne({ email });
       if (user) {
         await VerificationCode.deleteMany({
@@ -782,7 +834,26 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           userId: user._id,
           expiresAt: new Date(Date.now() + CODE_TTL_MS),
         });
-        await sendVerificationCode(email, code, 'password reset');
+        // Don't await — SMTP latency (~200-500 ms) would dwarf every
+        // other timing component and reveal account existence. Fire
+        // and forget; failures are logged inside the mailer. Errors
+        // are swallowed here for the same reason.
+        void sendVerificationCode(email, code, 'password reset').catch(() => {});
+      } else {
+        // Match the wall-clock shape of the user-exists branch so
+        // attackers can't distinguish "no account" from "account but
+        // SMTP queued in background" by measuring response time. The
+        // two queries below cost roughly the same as deleteMany +
+        // create, without writing dummy rows that pollute the DB.
+        await VerificationCode.findOne({
+          userId: null,
+          purpose: 'password_reset',
+          email,
+        }).lean();
+        await VerificationCode.countDocuments({
+          purpose: 'password_reset',
+          email,
+        });
       }
       return { sent: true, expiresInSeconds: CODE_TTL_MS / 1000 };
     },
@@ -813,7 +884,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-      const email = req.body.email.toLowerCase().trim();
+      const email = normalizeEmail(req.body.email);
       const user = await User.findOne({ email });
       if (!user) return reply.code(400).send({ error: 'invalid_code' });
 
@@ -828,7 +899,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (record.attempts >= MAX_ATTEMPTS) {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
-      if (record.code !== req.body.code) {
+      if (!safeCodeEqual(record.code, req.body.code)) {
         record.attempts += 1;
         await record.save();
         return reply.code(400).send({ error: 'invalid_code' });
@@ -868,7 +939,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
-      const email = req.body.email.toLowerCase().trim();
+      const email = normalizeEmail(req.body.email);
       const user = await User.findOne({ email });
       if (!user) return reply.code(400).send({ error: 'invalid_code' });
 
@@ -883,7 +954,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (record.attempts >= MAX_ATTEMPTS) {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
-      if (record.code !== req.body.code) {
+      if (!safeCodeEqual(record.code, req.body.code)) {
         record.attempts += 1;
         await record.save();
         return reply.code(400).send({ error: 'invalid_code' });

@@ -12,14 +12,46 @@ const parseList = (v: string | undefined): string[] =>
     .map((s) => s.trim())
     .filter(Boolean);
 
+const nodeEnv = process.env.NODE_ENV ?? 'development';
+const isProd = nodeEnv === 'production';
+
+// HS256 with a 256-bit secret is the floor for "not trivially
+// brute-forceable offline" by 2026 hardware. 32 chars of any
+// reasonable charset clears that bar; we refuse to boot below it
+// so a mis-set deploy can never ship with a default-ish secret.
+const jwtSecret = required('JWT_SECRET');
+if (jwtSecret.length < 32) {
+  throw new Error(
+    `JWT_SECRET must be at least 32 chars (got ${jwtSecret.length}). ` +
+      `Generate one with: node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`,
+  );
+}
+
+// Refuse to start in production against a plaintext Mongo URL. mongodb+srv
+// implies TLS; explicit ?tls=true or ssl=true also counts. Internal-only
+// replica sets behind a private network can opt out with
+// MONGO_ALLOW_INSECURE=true (documented escape hatch, not the default).
+const mongoUrl = required('MONGO_URL');
+if (isProd && process.env.MONGO_ALLOW_INSECURE !== 'true') {
+  const looksTls =
+    mongoUrl.startsWith('mongodb+srv://') ||
+    /[?&](tls|ssl)=true\b/i.test(mongoUrl);
+  if (!looksTls) {
+    throw new Error(
+      'Production MONGO_URL must use mongodb+srv:// or include tls=true. ' +
+        'Set MONGO_ALLOW_INSECURE=true only if Mongo is on a private network.',
+    );
+  }
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3000),
   host: process.env.HOST ?? '0.0.0.0',
-  mongoUrl: required('MONGO_URL'),
-  jwtSecret: required('JWT_SECRET'),
+  mongoUrl,
+  jwtSecret,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
   corsOrigins: parseList(process.env.CORS_ORIGINS),
-  nodeEnv: process.env.NODE_ENV ?? 'development',
+  nodeEnv,
   // Set to true behind a reverse proxy / TLS terminator that sets
   // X-Forwarded-For. Off by default: trusting the header without a proxy
   // would let any client spoof their source IP.

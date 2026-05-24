@@ -41,6 +41,13 @@ export const buildApp = async () => {
   await app.register(helmet, {
     contentSecurityPolicy: isProd ? undefined : false,
     crossOriginResourcePolicy: { policy: 'cross-origin' },
+    // HSTS with preload + includeSubDomains pins clients to HTTPS for
+    // two years and lets us submit the domain to the browser preload
+    // list (hstspreload.org). max-age below 1 year disqualifies the
+    // submission; 63072000 = 2 years is the recommended floor.
+    hsts: isProd
+      ? { maxAge: 63072000, includeSubDomains: true, preload: true }
+      : false,
   });
 
   // CORS: in dev, allow no-origin (mobile/native) and any localhost.

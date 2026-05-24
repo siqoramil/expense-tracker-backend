@@ -11,6 +11,13 @@ const userSchema = new Schema(
     // `iat` is older than this is rejected, so password reset invalidates
     // every previously-issued token.
     passwordChangedAt: { type: Date, default: () => new Date() },
+    // Brute-force lockout state. Each failed /auth/login bumps the counter;
+    // hitting the threshold parks `lockedUntil` in the future, after which
+    // login refuses regardless of password correctness. A successful login
+    // resets both fields. The IP-level rate limit catches floods; this
+    // catches slow distributed attacks against a single account.
+    failedLogins: { type: Number, default: 0 },
+    lockedUntil: { type: Date, default: null },
     pro: { type: Boolean, default: false },
     prefs: {
       lang: { type: String, enum: ['en', 'uz', 'ru', 'de', 'fr', 'es'], default: 'en' },
