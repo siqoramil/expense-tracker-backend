@@ -26,7 +26,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const items = await Notification.find({ userId: req.user.sub }).sort({ date: -1 });
+      const items = await Notification.find({ userId: req.user.sub }).sort({ date: -1 }).lean();
       return { items };
     },
   );

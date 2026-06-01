@@ -25,7 +25,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const items = await Budget.find({ userId: req.user.sub }).sort({ createdAt: 1 });
+      const items = await Budget.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
       return { items };
     },
   );

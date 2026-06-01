@@ -10,7 +10,7 @@ const paymentSchema = new Schema(
 
 const debtSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     direction: { type: String, enum: ['owe_me', 'i_owe'], required: true },
     name: { type: String, required: true, trim: true },
     color: { type: String, default: '#6366F1' },
@@ -23,6 +23,8 @@ const debtSchema = new Schema(
   },
   { timestamps: true },
 );
+
+debtSchema.index({ userId: 1, archived: 1 });
 
 export type DebtDoc = InferSchemaType<typeof debtSchema>;
 export const Debt = model('Debt', debtSchema);

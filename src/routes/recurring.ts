@@ -57,7 +57,7 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const items = await Recurring.find({ userId: req.user.sub }).sort({ nextDate: 1 });
+      const items = await Recurring.find({ userId: req.user.sub }).sort({ nextDate: 1 }).lean();
       return { items };
     },
   );

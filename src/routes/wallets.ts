@@ -78,7 +78,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const items = await Wallet.find({ userId: req.user.sub }).sort({ createdAt: 1 });
+      const items = await Wallet.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
       return { items };
     },
   );

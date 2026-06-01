@@ -2,7 +2,7 @@ import { Schema, model, type InferSchemaType } from 'mongoose';
 
 const notificationSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     kind: { type: String, enum: ['overdue', 'budget', 'bill', 'income'], required: true },
     title: {
       en: { type: String, required: true },
@@ -17,6 +17,8 @@ const notificationSchema = new Schema(
   },
   { timestamps: true },
 );
+
+notificationSchema.index({ userId: 1, read: 1 });
 
 export type NotificationDoc = InferSchemaType<typeof notificationSchema>;
 export const Notification = model('Notification', notificationSchema);

@@ -1,9 +1,11 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { Types } from 'mongoose';
 import { withMaybeTransaction } from '../lib/db-tx.js';
 import {
   errorResponse,
   itemResponse,
   itemsResponse,
+  OBJECT_ID_PATTERN,
   okResponse,
   transactionEntity,
 } from '../lib/schemas.js';
@@ -21,7 +23,6 @@ type TxBody = {
 
 const MONTH_RX = /^[0-9]{4}-(0[1-9]|1[0-2])$/;
 const DATE_RX = /^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
-const OBJECT_ID_RX = /^[0-9a-fA-F]{24}$/;
 
 const monthRange = (month: string): { gte: string; lt: string } => {
   const [y, m] = month.split('-').map(Number);
@@ -44,8 +45,8 @@ const txBodySchema = {
     // a free-form string here let arbitrary input slip through to
     // Mongoose, which then threw CastError → 500. Match the model so
     // bad input is rejected at the edge with 400.
-    cat: { type: 'string', pattern: OBJECT_ID_RX.source },
-    wallet: { type: 'string', pattern: OBJECT_ID_RX.source },
+    cat: { type: 'string', pattern: OBJECT_ID_PATTERN },
+    wallet: { type: 'string', pattern: OBJECT_ID_PATTERN },
     amount: { type: 'number', minimum: 0, maximum: 1e12 },
     note: { type: 'string', maxLength: 500 },
     date: { type: 'string', pattern: DATE_RX.source },
@@ -99,7 +100,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         filter.date = { $gte: gte, $lt: lt };
       }
       if (req.query.kind) filter.kind = req.query.kind;
-      const items = await Transaction.find(filter).sort({ date: -1, createdAt: -1 });
+      const items = await Transaction.find(filter).sort({ date: -1, createdAt: -1 }).lean();
       return { items };
     },
   );
@@ -151,7 +152,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
           'Updates a transaction and atomically reverses the previous wallet effect before applying the new one.',
         params: {
           type: 'object',
-          properties: { id: { type: 'string', pattern: OBJECT_ID_RX.source } },
+          properties: { id: { type: 'string', pattern: OBJECT_ID_PATTERN } },
           required: ['id'],
         },
         body: txBodySchema,
@@ -210,7 +211,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
           'Deletes a transaction and atomically reverses its effect on the wallet balance.',
         params: {
           type: 'object',
-          properties: { id: { type: 'string', pattern: OBJECT_ID_RX.source } },
+          properties: { id: { type: 'string', pattern: OBJECT_ID_PATTERN } },
           required: ['id'],
         },
         response: {
@@ -267,13 +268,19 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req) => {
       const { gte, lt } = monthRange(req.params.month);
-      const items = await Transaction.find({
-        userId: req.user.sub,
-        date: { $gte: gte, $lt: lt },
-      });
-      const income = items.filter((x) => x.kind === 'income').reduce((a, x) => a + x.amount, 0);
-      const expense = items.filter((x) => x.kind === 'expense').reduce((a, x) => a + x.amount, 0);
-      return { income, expense, net: income - expense, count: items.length };
+      const grouped = await Transaction.aggregate<{ _id: 'income' | 'expense'; sum: number; count: number }>([
+        { $match: { userId: new Types.ObjectId(req.user.sub), date: { $gte: gte, $lt: lt } } },
+        { $group: { _id: '$kind', sum: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]);
+      let income = 0;
+      let expense = 0;
+      let count = 0;
+      for (const row of grouped) {
+        count += row.count;
+        if (row._id === 'income') income = row.sum;
+        else if (row._id === 'expense') expense = row.sum;
+      }
+      return { income, expense, net: income - expense, count };
     },
   );
 };

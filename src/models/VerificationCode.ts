@@ -19,6 +19,7 @@ const schema = new Schema(
 );
 
 schema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+schema.index({ userId: 1, purpose: 1, consumed: 1 });
 
 export type VerificationCodeDoc = InferSchemaType<typeof schema>;
 export const VerificationCode = model('VerificationCode', schema);
