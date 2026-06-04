@@ -91,14 +91,12 @@ const swaggerPlugin = async (app: FastifyInstance) => {
       const next: Record<string, unknown> = { ...(schema ?? {}) };
       if (!next.tags) next.tags = [tagFromUrl(url)];
 
-      const methods = Array.isArray(route.method)
-        ? route.method
-        : [route.method];
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
       const allPublic = methods.every((m) => isPublic(String(m), url));
       if (!allPublic && !next.security) {
         next.security = [{ bearerAuth: [] }];
       }
-      return { schema: next as typeof schema, url };
+      return { schema: next, url };
     },
   });
 

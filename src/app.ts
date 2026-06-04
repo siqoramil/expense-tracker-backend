@@ -34,7 +34,10 @@ export const buildApp = async () => {
       level: isProd ? 'info' : 'debug',
       transport: isProd
         ? undefined
-        : { target: 'pino-pretty', options: { translateTime: 'SYS:HH:MM:ss', ignore: 'pid,hostname' } },
+        : {
+            target: 'pino-pretty',
+            options: { translateTime: 'SYS:HH:MM:ss', ignore: 'pid,hostname' },
+          },
     },
   });
 
@@ -45,9 +48,7 @@ export const buildApp = async () => {
     // two years and lets us submit the domain to the browser preload
     // list (hstspreload.org). max-age below 1 year disqualifies the
     // submission; 63072000 = 2 years is the recommended floor.
-    hsts: isProd
-      ? { maxAge: 63072000, includeSubDomains: true, preload: true }
-      : false,
+    hsts: isProd ? { maxAge: 63072000, includeSubDomains: true, preload: true } : false,
   });
 
   // CORS: in dev, allow no-origin (mobile/native) and any localhost.
@@ -115,30 +116,36 @@ export const buildApp = async () => {
   await app.register(recurringRoutes, { prefix: '/recurring' });
   await app.register(notificationsRoutes, { prefix: '/notifs' });
 
-  app.setErrorHandler((err: Error & { statusCode?: number; validation?: unknown; validationContext?: string }, _req, reply) => {
-    if (reply.sent) return;
-    const status = err.statusCode ?? 500;
-    if (status >= 500) {
-      app.log.error(err);
-      return reply.code(status).send({ error: 'internal_error' });
-    }
-    // Hide raw messages: only forward known short error codes (snake_case),
-    // strip stack/details. Validation errors get a generic code in prod,
-    // but include the structured details in non-prod so clients can debug
-    // schema mismatches without trial-and-error.
-    if (err.validation) {
-      if (isProd) {
-        return reply.code(status).send({ error: 'bad_request' });
+  app.setErrorHandler(
+    (
+      err: Error & { statusCode?: number; validation?: unknown; validationContext?: string },
+      _req,
+      reply,
+    ) => {
+      if (reply.sent) return;
+      const status = err.statusCode ?? 500;
+      if (status >= 500) {
+        app.log.error(err);
+        return reply.code(status).send({ error: 'internal_error' });
       }
-      return reply.code(status).send({
-        error: 'bad_request',
-        validation: err.validation,
-        validationContext: err.validationContext,
-      });
-    }
-    const safe = /[\s.<>:]/.test(err.message ?? '') ? 'bad_request' : err.message || 'error';
-    return reply.code(status).send({ error: safe });
-  });
+      // Hide raw messages: only forward known short error codes (snake_case),
+      // strip stack/details. Validation errors get a generic code in prod,
+      // but include the structured details in non-prod so clients can debug
+      // schema mismatches without trial-and-error.
+      if (err.validation) {
+        if (isProd) {
+          return reply.code(status).send({ error: 'bad_request' });
+        }
+        return reply.code(status).send({
+          error: 'bad_request',
+          validation: err.validation,
+          validationContext: err.validationContext,
+        });
+      }
+      const safe = /[\s.<>:]/.test(err.message ?? '') ? 'bad_request' : err.message || 'error';
+      return reply.code(status).send({ error: safe });
+    },
+  );
 
   return app;
 };

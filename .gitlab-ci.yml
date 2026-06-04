@@ -4,7 +4,7 @@ stages:
   - deploy
 
 variables:
-  NODE_VERSION: "20"
+  NODE_VERSION: '20'
 
 .node_template: &node_template
   image: node:${NODE_VERSION}-alpine

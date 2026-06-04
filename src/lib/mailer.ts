@@ -1,3 +1,7 @@
+// Intentional dev fallback: when SMTP is not configured (no SMTP_USER/SMTP_PASS),
+// outgoing emails are printed to stdout so developers can see verification codes
+// without a real mail server. console.log is allowed in this file by design.
+/* eslint-disable no-console */
 import { randomInt } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from './env.js';
@@ -25,15 +29,10 @@ const getTransporter = (): Transporter | null => {
 };
 
 const logToConsole = (payload: MailPayload) => {
-  // eslint-disable-next-line no-console
   console.log('\n--- MAIL (dev fallback) ---');
-  // eslint-disable-next-line no-console
   console.log(`To: ${payload.to}`);
-  // eslint-disable-next-line no-console
   console.log(`Subject: ${payload.subject}`);
-  // eslint-disable-next-line no-console
   console.log(payload.body);
-  // eslint-disable-next-line no-console
   console.log('---------------------------\n');
 };
 
@@ -51,10 +50,9 @@ export const sendMail = async (payload: MailPayload): Promise<void> => {
       text: payload.body,
     });
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('SMTP send failed:', err);
     logToConsole(payload);
-    throw new Error('mail_send_failed');
+    throw new Error('mail_send_failed', { cause: err });
   }
 };
 

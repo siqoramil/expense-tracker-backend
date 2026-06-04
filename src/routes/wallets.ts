@@ -69,8 +69,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     {
       schema: {
         summary: 'List wallets',
-        description:
-          "Returns every wallet owned by the authenticated user, in creation order.",
+        description: 'Returns every wallet owned by the authenticated user, in creation order.',
         response: {
           200: itemsResponse(walletEntity),
           401: errorResponse,
@@ -137,7 +136,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Delete wallet',
         description:
-          "Permanently deletes a wallet. Transactions that referenced this wallet keep their reference but the wallet record is gone.",
+          'Permanently deletes a wallet. Transactions that referenced this wallet keep their reference but the wallet record is gone.',
         params: idParams,
         response: {
           200: okResponse,

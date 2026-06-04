@@ -17,7 +17,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
     {
       schema: {
         summary: 'List budgets',
-        description: "Returns all budgets owned by the authenticated user.",
+        description: 'Returns all budgets owned by the authenticated user.',
         response: {
           200: itemsResponse(budgetEntity),
           401: errorResponse,

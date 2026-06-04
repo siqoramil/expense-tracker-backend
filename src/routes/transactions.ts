@@ -74,7 +74,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'List transactions',
         description:
-          'Returns the user\'s transactions, optionally filtered by month (YYYY-MM) and/or kind.',
+          "Returns the user's transactions, optionally filtered by month (YYYY-MM) and/or kind.",
         querystring: {
           type: 'object',
           properties: {
@@ -110,8 +110,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     {
       schema: {
         summary: 'Create transaction',
-        description:
-          'Creates a transaction and atomically updates the wallet balance.',
+        description: 'Creates a transaction and atomically updates the wallet balance.',
         body: {
           ...txBodySchema,
           required: ['kind', 'cat', 'wallet', 'amount', 'date'],
@@ -126,22 +125,20 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const tx = await withMaybeTransaction(async (session) => {
-        const wallet = await Wallet.findOne(
-          { _id: req.body.wallet, userId: req.user.sub },
-          null,
-          { session },
-        );
+        const wallet = await Wallet.findOne({ _id: req.body.wallet, userId: req.user.sub }, null, {
+          session,
+        });
         if (!wallet) throw reply.code(404).send({ error: 'wallet_not_found' });
         wallet.balance += delta(req.body.kind, req.body.amount);
         await wallet.save({ session: session ?? undefined });
-        const [created] = await Transaction.create(
-          [{ ...req.body, userId: req.user.sub }],
-          { session: session ?? undefined },
-        );
+        const [created] = await Transaction.create([{ ...req.body, userId: req.user.sub }], {
+          session: session ?? undefined,
+        });
         return created;
       });
       return { item: tx };
-    });
+    },
+  );
 
   app.patch<{ Params: { id: string }; Body: Partial<TxBody> }>(
     '/:id',
@@ -165,31 +162,25 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const updated = await withMaybeTransaction(async (session) => {
-        const old = await Transaction.findOne(
-          { _id: req.params.id, userId: req.user.sub },
-          null,
-          { session },
-        );
+        const old = await Transaction.findOne({ _id: req.params.id, userId: req.user.sub }, null, {
+          session,
+        });
         if (!old) throw reply.code(404).send({ error: 'not_found' });
 
         const next = { ...old.toObject(), ...req.body };
 
         // Reverse old wallet effect
-        const oldWallet = await Wallet.findOne(
-          { _id: old.wallet, userId: req.user.sub },
-          null,
-          { session },
-        );
+        const oldWallet = await Wallet.findOne({ _id: old.wallet, userId: req.user.sub }, null, {
+          session,
+        });
         if (oldWallet) {
           oldWallet.balance -= delta(old.kind, old.amount);
           await oldWallet.save({ session: session ?? undefined });
         }
         // Apply new wallet effect
-        const newWallet = await Wallet.findOne(
-          { _id: next.wallet, userId: req.user.sub },
-          null,
-          { session },
-        );
+        const newWallet = await Wallet.findOne({ _id: next.wallet, userId: req.user.sub }, null, {
+          session,
+        });
         if (newWallet) {
           newWallet.balance += delta(next.kind, next.amount);
           await newWallet.save({ session: session ?? undefined });
@@ -200,7 +191,8 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         return old;
       });
       return { item: updated };
-    });
+    },
+  );
 
   app.delete<{ Params: { id: string } }>(
     '/:id',
@@ -223,17 +215,13 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       await withMaybeTransaction(async (session) => {
-        const tx = await Transaction.findOne(
-          { _id: req.params.id, userId: req.user.sub },
-          null,
-          { session },
-        );
+        const tx = await Transaction.findOne({ _id: req.params.id, userId: req.user.sub }, null, {
+          session,
+        });
         if (!tx) throw reply.code(404).send({ error: 'not_found' });
-        const wallet = await Wallet.findOne(
-          { _id: tx.wallet, userId: req.user.sub },
-          null,
-          { session },
-        );
+        const wallet = await Wallet.findOne({ _id: tx.wallet, userId: req.user.sub }, null, {
+          session,
+        });
         if (wallet) {
           wallet.balance -= delta(tx.kind, tx.amount);
           await wallet.save({ session: session ?? undefined });
@@ -241,7 +229,8 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         await tx.deleteOne({ session: session ?? undefined });
       });
       return { ok: true };
-    });
+    },
+  );
 
   app.get<{ Params: { month: string } }>(
     '/stats/:month',
@@ -268,7 +257,11 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req) => {
       const { gte, lt } = monthRange(req.params.month);
-      const grouped = await Transaction.aggregate<{ _id: 'income' | 'expense'; sum: number; count: number }>([
+      const grouped = await Transaction.aggregate<{
+        _id: 'income' | 'expense';
+        sum: number;
+        count: number;
+      }>([
         { $match: { userId: new Types.ObjectId(req.user.sub), date: { $gte: gte, $lt: lt } } },
         { $group: { _id: '$kind', sum: { $sum: '$amount' }, count: { $sum: 1 } } },
       ]);

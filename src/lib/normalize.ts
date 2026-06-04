@@ -7,5 +7,4 @@
 // NFKC also folds compatibility forms (ligatures, halfwidth digits)
 // onto their canonical equivalents, which is the right behaviour
 // for email addresses since they should be compared by identity.
-export const normalizeEmail = (raw: string): string =>
-  raw.normalize('NFKC').toLowerCase().trim();
+export const normalizeEmail = (raw: string): string => raw.normalize('NFKC').toLowerCase().trim();

@@ -55,35 +55,35 @@ Without a replica set the server still runs — `/tx` writes execute without a s
 
 ## Scripts
 
-| Command | Description |
-|---|---|
-| `yarn dev` | Run with `tsx watch` + pino-pretty logging (hot-reload) |
-| `yarn build` | Compile TypeScript to `dist/` |
-| `yarn start` | Run compiled output (`node dist/index.js`) |
-| `yarn typecheck` | Type-check without emitting |
-| `yarn test` | Run Vitest suite (smoke + schema validation) |
+| Command          | Description                                             |
+| ---------------- | ------------------------------------------------------- |
+| `yarn dev`       | Run with `tsx watch` + pino-pretty logging (hot-reload) |
+| `yarn build`     | Compile TypeScript to `dist/`                           |
+| `yarn start`     | Run compiled output (`node dist/index.js`)              |
+| `yarn typecheck` | Type-check without emitting                             |
+| `yarn test`      | Run Vitest suite (smoke + schema validation)            |
 
 ## Environment variables
 
 Defined in `src/lib/env.ts`. See `.env.example` for the full template.
 
-| Variable | Required | Default | Notes |
-|---|---|---|---|
-| `MONGO_URL` | Yes | — | e.g. `mongodb://localhost:10100/expense-tracker` (append `?replicaSet=rs0` for transactional writes) |
-| `JWT_SECRET` | Yes | — | Long random string |
-| `PORT` | No | `3000` | |
-| `HOST` | No | `0.0.0.0` | |
-| `JWT_EXPIRES_IN` | No | `7d` | |
-| `NODE_ENV` | No | `development` | `production` enables stricter CORS + JSON logs and hides validation detail in error responses |
-| `CORS_ORIGINS` | No | — | Comma-separated whitelist (production only) |
-| `TRUST_PROXY` | No | `false` | Set `true` when behind a reverse proxy / TLS terminator. Makes Fastify honour `X-Forwarded-For` so per-IP rate limits don't lump everyone onto one bucket. **Do not enable without a proxy** — clients could spoof their source IP. |
-| `GOOGLE_WEB_CLIENT_ID` | No | — | Google OAuth Web client ID |
-| `GOOGLE_IOS_CLIENT_ID` | No | — | Google OAuth iOS client ID |
-| `GOOGLE_ANDROID_CLIENT_ID` | No | — | Google OAuth Android client ID |
-| `SMTP_HOST` | No | `smtp.gmail.com` | |
-| `SMTP_PORT` | No | `465` | |
-| `SMTP_USER` / `SMTP_PASS` | No | — | If empty, codes are printed to console |
-| `SMTP_FROM` | No | — | e.g. `Expense Tracker <noreply@example.com>` |
+| Variable                   | Required | Default          | Notes                                                                                                                                                                                                                               |
+| -------------------------- | -------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MONGO_URL`                | Yes      | —                | e.g. `mongodb://localhost:10100/expense-tracker` (append `?replicaSet=rs0` for transactional writes)                                                                                                                                |
+| `JWT_SECRET`               | Yes      | —                | Long random string                                                                                                                                                                                                                  |
+| `PORT`                     | No       | `3000`           |                                                                                                                                                                                                                                     |
+| `HOST`                     | No       | `0.0.0.0`        |                                                                                                                                                                                                                                     |
+| `JWT_EXPIRES_IN`           | No       | `7d`             |                                                                                                                                                                                                                                     |
+| `NODE_ENV`                 | No       | `development`    | `production` enables stricter CORS + JSON logs and hides validation detail in error responses                                                                                                                                       |
+| `CORS_ORIGINS`             | No       | —                | Comma-separated whitelist (production only)                                                                                                                                                                                         |
+| `TRUST_PROXY`              | No       | `false`          | Set `true` when behind a reverse proxy / TLS terminator. Makes Fastify honour `X-Forwarded-For` so per-IP rate limits don't lump everyone onto one bucket. **Do not enable without a proxy** — clients could spoof their source IP. |
+| `GOOGLE_WEB_CLIENT_ID`     | No       | —                | Google OAuth Web client ID                                                                                                                                                                                                          |
+| `GOOGLE_IOS_CLIENT_ID`     | No       | —                | Google OAuth iOS client ID                                                                                                                                                                                                          |
+| `GOOGLE_ANDROID_CLIENT_ID` | No       | —                | Google OAuth Android client ID                                                                                                                                                                                                      |
+| `SMTP_HOST`                | No       | `smtp.gmail.com` |                                                                                                                                                                                                                                     |
+| `SMTP_PORT`                | No       | `465`            |                                                                                                                                                                                                                                     |
+| `SMTP_USER` / `SMTP_PASS`  | No       | —                | If empty, codes are printed to console                                                                                                                                                                                              |
+| `SMTP_FROM`                | No       | —                | e.g. `Expense Tracker <noreply@example.com>`                                                                                                                                                                                        |
 
 In **development**, CORS automatically allows requests with no `Origin` (mobile / native) and any `localhost`, `127.0.0.1`, `10.x.x.x`, or `192.168.x.x` host (the regex anchors on the host boundary, so `https://192.168.1evil.com` is rejected). In **production**, only origins listed in `CORS_ORIGINS` are accepted.
 
@@ -91,30 +91,30 @@ In **development**, CORS automatically allows requests with no `Origin` (mobile 
 
 All routes return JSON. Errors use the shape `{ "error": "<snake_case_code>" }` with appropriate HTTP status. Body validation is strict — unknown fields are rejected as `400 bad_request` (Fastify v5's silent-strip default is disabled). Rate limit: **200 requests/minute per IP** globally, with tighter caps on credential-touching auth routes (5–10/min).
 
-| Route | Auth | Purpose |
-|---|---|---|
-| `GET /health` | — | Liveness probe |
-| `GET /docs` | — | Swagger UI |
-| `POST /auth/register` | — | Create account, returns `{ token, user }` |
-| `POST /auth/login` | — | Email + password sign-in |
-| `POST /auth/google` | — | Exchange Google `id_token` for app token. Returns `409 account_link_required` if the email already has a password account — the user must sign in with their password and call `/auth/google/link`. |
-| `POST /auth/google/link` | JWT | Link a Google identity onto the current account (Google email must match the account email) |
-| `POST /auth/password/forgot` | — | Send reset code via SMTP |
-| `POST /auth/password/verify-code` | — | Validate reset code |
-| `POST /auth/password/reset` | — | Set new password using code; bumps `passwordChangedAt` and **revokes every previously-issued JWT** |
-| `GET /auth/me` | JWT | Current user profile |
-| `PATCH /auth/me` | JWT | Update name / avatar / prefs (prefs schema is whitelisted) |
-| `POST /auth/email/request-change` | JWT | Send code to new email |
-| `POST /auth/email/verify-change` | JWT | Apply email change |
-| `POST /auth/account/request-delete` | JWT | Email a 6-digit account-deletion code |
-| `POST /auth/account/confirm-delete` | JWT | Confirm code **plus** re-auth (password for password accounts; fresh Google `idToken` for Google-only accounts), then permanently delete the user and all data |
-| `/categories` | JWT | User-defined transaction categories |
-| `/wallets` | JWT | Wallets / accounts |
-| `/tx` | JWT | Transactions (income / expense) — writes use a Mongo session when the deployment supports it |
-| `/debts` | JWT | Debtor & creditor tracking |
-| `/budgets` | JWT | Monthly budgets |
-| `/recurring` | JWT | Recurring transactions |
-| `/notifs` | JWT | Notifications — **read-only from the client** (list, mark read, delete). Server-only events generate the records. |
+| Route                               | Auth | Purpose                                                                                                                                                                                             |
+| ----------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                       | —    | Liveness probe                                                                                                                                                                                      |
+| `GET /docs`                         | —    | Swagger UI                                                                                                                                                                                          |
+| `POST /auth/register`               | —    | Create account, returns `{ token, user }`                                                                                                                                                           |
+| `POST /auth/login`                  | —    | Email + password sign-in                                                                                                                                                                            |
+| `POST /auth/google`                 | —    | Exchange Google `id_token` for app token. Returns `409 account_link_required` if the email already has a password account — the user must sign in with their password and call `/auth/google/link`. |
+| `POST /auth/google/link`            | JWT  | Link a Google identity onto the current account (Google email must match the account email)                                                                                                         |
+| `POST /auth/password/forgot`        | —    | Send reset code via SMTP                                                                                                                                                                            |
+| `POST /auth/password/verify-code`   | —    | Validate reset code                                                                                                                                                                                 |
+| `POST /auth/password/reset`         | —    | Set new password using code; bumps `passwordChangedAt` and **revokes every previously-issued JWT**                                                                                                  |
+| `GET /auth/me`                      | JWT  | Current user profile                                                                                                                                                                                |
+| `PATCH /auth/me`                    | JWT  | Update name / avatar / prefs (prefs schema is whitelisted)                                                                                                                                          |
+| `POST /auth/email/request-change`   | JWT  | Send code to new email                                                                                                                                                                              |
+| `POST /auth/email/verify-change`    | JWT  | Apply email change                                                                                                                                                                                  |
+| `POST /auth/account/request-delete` | JWT  | Email a 6-digit account-deletion code                                                                                                                                                               |
+| `POST /auth/account/confirm-delete` | JWT  | Confirm code **plus** re-auth (password for password accounts; fresh Google `idToken` for Google-only accounts), then permanently delete the user and all data                                      |
+| `/categories`                       | JWT  | User-defined transaction categories                                                                                                                                                                 |
+| `/wallets`                          | JWT  | Wallets / accounts                                                                                                                                                                                  |
+| `/tx`                               | JWT  | Transactions (income / expense) — writes use a Mongo session when the deployment supports it                                                                                                        |
+| `/debts`                            | JWT  | Debtor & creditor tracking                                                                                                                                                                          |
+| `/budgets`                          | JWT  | Monthly budgets                                                                                                                                                                                     |
+| `/recurring`                        | JWT  | Recurring transactions                                                                                                                                                                              |
+| `/notifs`                           | JWT  | Notifications — **read-only from the client** (list, mark read, delete). Server-only events generate the records.                                                                                   |
 
 JWT is sent as `Authorization: Bearer <token>`.
 

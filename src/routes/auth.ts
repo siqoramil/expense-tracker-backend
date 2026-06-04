@@ -110,7 +110,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const avatar = initialsFrom(name);
       try {
         const user = await User.create({ email, passwordHash, name, avatar });
-        const token = app.jwt.sign({ sub: user.id });
+        const token = app.jwt.sign({ sub: user.id as string });
         return { token, user: toUserDTO(user) };
       } catch (err) {
         if (isDuplicateKeyError(err)) {
@@ -156,8 +156,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       // a precomputed dummy when not. Without this, "unknown email" returns
       // in ~5 ms and "wrong password" in ~100 ms, which is a 20× timing
       // signal an attacker uses to enumerate registered emails.
-      const hashToCheck =
-        user && user.passwordHash ? user.passwordHash : DUMMY_PASSWORD_HASH;
+      const hashToCheck = user && user.passwordHash ? user.passwordHash : DUMMY_PASSWORD_HASH;
       const passwordOk = await bcrypt.compare(password, hashToCheck);
 
       // Tally failures on real password accounts only. Google-only accounts
@@ -190,7 +189,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         await user.save();
       }
 
-      const token = app.jwt.sign({ sub: user.id });
+      const token = app.jwt.sign({ sub: user.id as string });
       return { token, user: toUserDTO(user) };
     },
   );
@@ -284,7 +283,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         await user.save();
       }
 
-      const token = app.jwt.sign({ sub: user.id });
+      const token = app.jwt.sign({ sub: user.id as string });
       return { token, user: toUserDTO(user) };
     },
   );
@@ -498,7 +497,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Confirm account deletion',
         description:
-          "Verifies the 6-digit code from /account/request-delete AND re-authenticates the caller (password for password accounts, fresh Google ID token for Google-only accounts), then permanently deletes the user along with all of their data. Returns 204 on success. Locked after 5 failed attempts.",
+          'Verifies the 6-digit code from /account/request-delete AND re-authenticates the caller (password for password accounts, fresh Google ID token for Google-only accounts), then permanently deletes the user along with all of their data. Returns 204 on success. Locked after 5 failed attempts.',
         body: {
           type: 'object',
           required: ['code'],
@@ -511,8 +510,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             password: {
               type: 'string',
               maxLength: 128,
-              description:
-                'Current password. Required when the account has a password set.',
+              description: 'Current password. Required when the account has a password set.',
             },
             idToken: {
               type: 'string',
@@ -622,7 +620,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Request email change code',
         description:
-          "Sends a 6-digit code to the proposed new email address so the user can prove ownership. The response is identical whether or not the target address is already registered, to avoid leaking account existence to an authenticated caller. Codes expire after 10 minutes. Rate limited to 5 req/min per IP.",
+          'Sends a 6-digit code to the proposed new email address so the user can prove ownership. The response is identical whether or not the target address is already registered, to avoid leaking account existence to an authenticated caller. Codes expire after 10 minutes. Rate limited to 5 req/min per IP.',
         body: {
           type: 'object',
           required: ['newEmail'],
@@ -801,7 +799,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Send password reset code',
         description:
-          "Sends a 6-digit reset code to the email if an account exists. The response is identical whether or not the email is registered, to avoid leaking account existence. Rate limited to 5 req/min per IP.",
+          'Sends a 6-digit reset code to the email if an account exists. The response is identical whether or not the email is registered, to avoid leaking account existence. Rate limited to 5 req/min per IP.',
         body: {
           type: 'object',
           required: ['email'],
@@ -866,7 +864,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Verify password reset code',
         description:
-          "Checks that the supplied reset code is valid for the given email — does not consume it. Useful for two-step UIs where the user enters the code before typing a new password. Locked after 5 failed attempts.",
+          'Checks that the supplied reset code is valid for the given email — does not consume it. Useful for two-step UIs where the user enters the code before typing a new password. Locked after 5 failed attempts.',
         body: {
           type: 'object',
           required: ['email', 'code'],
@@ -967,14 +965,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       record.consumed = true;
       await Promise.all([user.save(), record.save()]);
 
-      const token = app.jwt.sign({ sub: user.id });
+      const token = app.jwt.sign({ sub: user.id as string });
       return { token, user: toUserDTO(user) };
     },
   );
 };
 
 const toUserDTO = (u: InstanceType<typeof User>) => ({
-  id: u.id,
+  id: u.id as string,
   email: u.email,
   name: u.name,
   avatar: u.avatar,

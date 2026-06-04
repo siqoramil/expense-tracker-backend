@@ -6,10 +6,7 @@ import bcrypt from 'bcryptjs';
 // it, the response time difference between "no such user" (~5 ms)
 // and "wrong password" (~100 ms) reveals account existence to any
 // attacker who can measure the response.
-export const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
-  'extracker-timing-safety-placeholder',
-  12,
-);
+export const DUMMY_PASSWORD_HASH = bcrypt.hashSync('extracker-timing-safety-placeholder', 12);
 
 // Constant-time compare for fixed-length 6-digit verification codes.
 // `===` leaks the matching prefix length through CPU branch timing.

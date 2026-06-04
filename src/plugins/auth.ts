@@ -1,11 +1,12 @@
 import fastifyJwt from '@fastify/jwt';
+import { type preHandlerHookHandler } from 'fastify';
 import fp from 'fastify-plugin';
 import { env } from '../lib/env.js';
 import { User } from '../models/User.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    auth: import('fastify').preHandlerHookHandler;
+    auth: preHandlerHookHandler;
   }
 }
 

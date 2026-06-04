@@ -17,8 +17,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     {
       schema: {
         summary: 'List notifications',
-        description:
-          "Returns all notifications for the authenticated user, newest first.",
+        description: 'Returns all notifications for the authenticated user, newest first.',
         response: {
           200: itemsResponse(notificationEntity),
           401: errorResponse,
@@ -67,7 +66,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     {
       schema: {
         summary: 'Mark all notifications as read',
-        description: "Marks every unread notification belonging to the user as read.",
+        description: 'Marks every unread notification belonging to the user as read.',
         response: {
           200: okResponse,
           401: errorResponse,

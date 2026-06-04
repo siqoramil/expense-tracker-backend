@@ -33,9 +33,7 @@ if (jwtSecret.length < 32) {
 // MONGO_ALLOW_INSECURE=true (documented escape hatch, not the default).
 const mongoUrl = required('MONGO_URL');
 if (isProd && process.env.MONGO_ALLOW_INSECURE !== 'true') {
-  const looksTls =
-    mongoUrl.startsWith('mongodb+srv://') ||
-    /[?&](tls|ssl)=true\b/i.test(mongoUrl);
+  const looksTls = mongoUrl.startsWith('mongodb+srv://') || /[?&](tls|ssl)=true\b/i.test(mongoUrl);
   if (!looksTls) {
     throw new Error(
       'Production MONGO_URL must use mongodb+srv:// or include tls=true. ' +

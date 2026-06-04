@@ -64,7 +64,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'List debts',
         description:
-          'Returns the user\'s debts. By default excludes archived ones; pass `archived=true` to include them.',
+          "Returns the user's debts. By default excludes archived ones; pass `archived=true` to include them.",
         querystring: {
           type: 'object',
           properties: {
