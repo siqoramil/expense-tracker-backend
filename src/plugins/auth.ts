@@ -12,10 +12,12 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    payload: { sub: string };
+    // `purpose` scopes single-use tokens (e.g. password_reset_verified) so a
+    // token minted for one flow can't be replayed in another.
+    payload: { sub: string; purpose?: string };
     // `iat`/`exp` are added by the signer; expose them so the auth hook can
     // enforce passwordChangedAt revocation.
-    user: { sub: string; iat: number; exp: number };
+    user: { sub: string; iat: number; exp: number; purpose?: string };
   }
 }
 

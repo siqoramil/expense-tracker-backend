@@ -39,6 +39,9 @@ const logToConsole = (payload: MailPayload) => {
 export const sendMail = async (payload: MailPayload): Promise<void> => {
   const transporter = getTransporter();
   if (!transporter) {
+    if (env.nodeEnv === 'production') {
+      throw new Error('mail_not_configured');
+    }
     logToConsole(payload);
     return;
   }

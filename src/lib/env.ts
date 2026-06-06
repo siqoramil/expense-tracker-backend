@@ -42,12 +42,29 @@ if (isProd && process.env.MONGO_ALLOW_INSECURE !== 'true') {
   }
 }
 
+const rawJwtExpiresIn = process.env.JWT_EXPIRES_IN ?? '7d';
+const jwtExpiresInMatch = /^(\d+)[smhd]$/.exec(rawJwtExpiresIn);
+if (!jwtExpiresInMatch || Number(jwtExpiresInMatch[1]) === 0) {
+  throw new Error(
+    `JWT_EXPIRES_IN must match \\d+[smhd] with a positive value (e.g. "7d", "1h"). Got: "${rawJwtExpiresIn}".`,
+  );
+}
+if (isProd) {
+  const seconds = Number(jwtExpiresInMatch[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[jwtExpiresInMatch[0].slice(-1) as 's' | 'm' | 'h' | 'd'];
+  if (seconds < 3600) {
+    throw new Error(
+      `JWT_EXPIRES_IN must be at least 1h in production (got "${rawJwtExpiresIn}"). ` +
+        'Short-lived tokens break revocation assumptions.',
+    );
+  }
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3000),
   host: process.env.HOST ?? '0.0.0.0',
   mongoUrl,
   jwtSecret,
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
+  jwtExpiresIn: rawJwtExpiresIn,
   corsOrigins: parseList(process.env.CORS_ORIGINS),
   nodeEnv,
   // Set to true behind a reverse proxy / TLS terminator that sets

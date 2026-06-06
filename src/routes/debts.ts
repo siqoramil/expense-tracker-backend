@@ -26,7 +26,7 @@ const debtBody = {
     name: { type: 'string', minLength: 1, maxLength: 120 },
     color: { type: 'string', maxLength: 40 },
     amount: { type: 'number', minimum: 0, maximum: 1e12 },
-    due: { type: 'string', maxLength: 32 },
+    due: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$' },
     note: { type: 'string', maxLength: 1000 },
   },
   additionalProperties: false,
@@ -39,7 +39,7 @@ const debtPatchBody = {
     name: { type: 'string', minLength: 1, maxLength: 120 },
     color: { type: 'string', maxLength: 40 },
     amount: { type: 'number', minimum: 0, maximum: 1e12 },
-    due: { type: 'string', maxLength: 32 },
+    due: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$' },
     note: { type: 'string', maxLength: 1000 },
   },
   additionalProperties: false,
@@ -50,7 +50,7 @@ const paymentBody = {
   required: ['amount'],
   properties: {
     amount: { type: 'number', minimum: 0, maximum: 1e12 },
-    date: { type: 'string', maxLength: 32 },
+    date: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$' },
   },
   additionalProperties: false,
 } as const;

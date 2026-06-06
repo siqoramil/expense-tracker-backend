@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  OBJECT_ID_PATTERN,
   budgetEntity,
   errorResponse,
   idParams,
@@ -40,7 +41,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
           type: 'object',
           required: ['cat', 'limit'],
           properties: {
-            cat: { type: 'string', minLength: 1, maxLength: 80 },
+            cat: { type: 'string', pattern: OBJECT_ID_PATTERN },
             limit: { type: 'number', minimum: 0, maximum: 1e12 },
           },
           additionalProperties: false,

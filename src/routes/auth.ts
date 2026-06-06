@@ -9,7 +9,6 @@ import {
   authResponse,
   codeSentResponse,
   errorResponse,
-  okResponse,
   userResponse,
 } from '../lib/schemas.js';
 import { DUMMY_PASSWORD_HASH, safeCodeEqual } from '../lib/security.js';
@@ -63,6 +62,35 @@ const BCRYPT_ROUNDS = 12;
 // minute across thousands of IPs would otherwise be unbounded).
 const LOGIN_FAILURE_THRESHOLD = 5;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+
+// Short-lived JWT used by /password/verify-code to prove the code was
+// checked before /password/reset accepts it. exp=2min is tight enough
+// that a leaked token is useless by the time an attacker replays it.
+const VERIFIED_TOKEN_TTL = '2m';
+
+// Checks lockout, compares password, and updates failure/lockout counters.
+// Returns 'locked' | 'invalid' | 'ok'. Callers must save() the user on 'ok'
+// or 'invalid' (the model is mutated in-place so a single save suffices).
+const checkPasswordAuth = async (
+  user: InstanceType<typeof User>,
+  password: string,
+): Promise<'locked' | 'invalid' | 'ok'> => {
+  if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) return 'locked';
+  const ok = await bcrypt.compare(password, user.passwordHash!);
+  if (!ok) {
+    user.failedLogins = (user.failedLogins ?? 0) + 1;
+    if (user.failedLogins >= LOGIN_FAILURE_THRESHOLD) {
+      user.lockedUntil = new Date(Date.now() + LOGIN_LOCKOUT_MS);
+      user.failedLogins = 0;
+    }
+    return 'invalid';
+  }
+  if (user.failedLogins || user.lockedUntil) {
+    user.failedLogins = 0;
+    user.lockedUntil = null;
+  }
+  return 'ok';
+};
 
 // Strict rate limits for credential-touching routes.
 const tightLimit = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
@@ -152,42 +180,24 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const email = normalizeEmail(req.body.email);
       const user = await User.findOne({ email });
 
-      // Always run bcrypt — against the user's hash when present, against
-      // a precomputed dummy when not. Without this, "unknown email" returns
-      // in ~5 ms and "wrong password" in ~100 ms, which is a 20× timing
-      // signal an attacker uses to enumerate registered emails.
-      const hashToCheck = user && user.passwordHash ? user.passwordHash : DUMMY_PASSWORD_HASH;
-      const passwordOk = await bcrypt.compare(password, hashToCheck);
-
       // Tally failures on real password accounts only. Google-only accounts
       // have an empty passwordHash and can't be brute-forced through this
       // endpoint, so locking them would just deny service for no benefit.
       const isPasswordAccount = Boolean(user?.passwordHash);
 
-      if (!user || !isPasswordAccount || !passwordOk) {
-        if (user && isPasswordAccount) {
-          user.failedLogins = (user.failedLogins ?? 0) + 1;
-          if (user.failedLogins >= LOGIN_FAILURE_THRESHOLD) {
-            user.lockedUntil = new Date(Date.now() + LOGIN_LOCKOUT_MS);
-            user.failedLogins = 0;
-          }
-          await user.save();
-        }
+      if (!user || !isPasswordAccount) {
+        // Always run bcrypt against a dummy hash so "unknown email" and
+        // "wrong password" take the same wall-clock time — a 20× timing
+        // gap would otherwise enumerate registered emails.
+        await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
         return reply.code(401).send({ error: 'invalid_credentials' });
       }
 
-      // Successful password match — but lockout still blocks login until
-      // the window expires. Returning the same code as a wrong password
-      // prevents an attacker from probing for locked accounts.
-      if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
-        return reply.code(423).send({ error: 'account_locked' });
-      }
+      const result = await checkPasswordAuth(user, password);
+      await user.save();
 
-      if (user.failedLogins || user.lockedUntil) {
-        user.failedLogins = 0;
-        user.lockedUntil = null;
-        await user.save();
-      }
+      if (result === 'locked') return reply.code(423).send({ error: 'account_locked' });
+      if (result === 'invalid') return reply.code(401).send({ error: 'invalid_credentials' });
 
       const token = app.jwt.sign({ sub: user.id as string });
       return { token, user: toUserDTO(user) };
@@ -527,6 +537,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           400: errorResponse,
           401: errorResponse,
           404: errorResponse,
+          423: errorResponse,
           429: errorResponse,
           503: errorResponse,
         },
@@ -543,8 +554,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         if (!req.body.password) {
           return reply.code(400).send({ error: 'password_required' });
         }
-        const ok = await bcrypt.compare(req.body.password, user.passwordHash);
-        if (!ok) return reply.code(401).send({ error: 'invalid_credentials' });
+        const authResult = await checkPasswordAuth(user, req.body.password);
+        await user.save();
+        if (authResult === 'locked') return reply.code(423).send({ error: 'account_locked' });
+        if (authResult === 'invalid') return reply.code(401).send({ error: 'invalid_credentials' });
       } else {
         // Google-only account: require a fresh ID token whose sub matches
         // the linked googleId. The ID token is signed by Google and short-
@@ -708,6 +721,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           401: errorResponse,
           404: errorResponse,
           409: errorResponse,
+          423: errorResponse,
           429: errorResponse,
           503: errorResponse,
         },
@@ -724,8 +738,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         if (!req.body.password) {
           return reply.code(400).send({ error: 'password_required' });
         }
-        const ok = await bcrypt.compare(req.body.password, user.passwordHash);
-        if (!ok) return reply.code(401).send({ error: 'invalid_credentials' });
+        const authResult = await checkPasswordAuth(user, req.body.password);
+        await user.save();
+        if (authResult === 'locked') return reply.code(423).send({ error: 'account_locked' });
+        if (authResult === 'invalid') return reply.code(401).send({ error: 'invalid_credentials' });
       } else {
         if (!googleClient || googleAudiences.length === 0) {
           return reply.code(503).send({ error: 'google_auth_disabled' });
@@ -864,7 +880,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Verify password reset code',
         description:
-          'Checks that the supplied reset code is valid for the given email — does not consume it. Useful for two-step UIs where the user enters the code before typing a new password. Locked after 5 failed attempts.',
+          'Checks that the supplied reset code is valid for the given email and returns a short-lived verified token (exp=2min) required by /password/reset. Using a one-time token prevents the unchecked code from being replayed directly into the reset step. Locked after 5 failed attempts.',
         body: {
           type: 'object',
           required: ['email', 'code'],
@@ -875,7 +891,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           additionalProperties: false,
         },
         response: {
-          200: okResponse,
+          200: {
+            type: 'object',
+            properties: {
+              ok: { type: 'boolean' },
+              verifiedToken: { type: 'string', description: 'Short-lived JWT (2min) gating /password/reset.' },
+            },
+          },
           400: errorResponse,
           429: errorResponse,
         },
@@ -902,21 +924,29 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         await record.save();
         return reply.code(400).send({ error: 'invalid_code' });
       }
-      return { ok: true };
+
+      // Issue a short-lived one-time token proving this code was verified.
+      // /password/reset requires it so a valid code cannot be replayed
+      // directly without first passing through this endpoint.
+      const verifiedToken = app.jwt.sign(
+        { sub: email, purpose: 'password_reset_verified' },
+        { expiresIn: VERIFIED_TOKEN_TTL },
+      );
+      return { ok: true, verifiedToken };
     },
   );
 
-  app.post<{ Body: { email: string; code: string; newPassword: string } }>(
+  app.post<{ Body: { email: string; code: string; newPassword: string; verifiedToken: string } }>(
     '/password/reset',
     {
       ...tightLimit,
       schema: {
         summary: 'Reset password',
         description:
-          "Verifies the reset code, replaces the user's password hash, consumes the code, and returns a fresh signed JWT with the user profile. Locked after 5 failed attempts.",
+          "Verifies the reset code and the verifiedToken issued by /password/verify-code, replaces the user's password hash, consumes the code, and returns a fresh signed JWT with the user profile. The verifiedToken closes the replay gap: a raw code cannot be submitted here without first passing through /password/verify-code. Locked after 5 failed attempts.",
         body: {
           type: 'object',
-          required: ['email', 'code', 'newPassword'],
+          required: ['email', 'code', 'newPassword', 'verifiedToken'],
           properties: {
             email: { type: 'string', format: 'email', maxLength: 200 },
             code: { type: 'string', pattern: '^[0-9]{6}$' },
@@ -925,6 +955,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               pattern: PASSWORD_PATTERN,
               maxLength: 128,
               description: '≥ 8 chars; must contain at least one letter and one digit.',
+            },
+            verifiedToken: {
+              type: 'string',
+              minLength: 20,
+              maxLength: 2048,
+              description: 'Short-lived JWT returned by /password/verify-code.',
             },
           },
           additionalProperties: false,
@@ -937,7 +973,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
+      // Validate the verifiedToken before touching the DB.
+      let verifiedPayload: { sub: string; purpose: string };
+      try {
+        verifiedPayload = app.jwt.verify<{ sub: string; purpose: string }>(req.body.verifiedToken);
+      } catch {
+        return reply.code(400).send({ error: 'code_expired' });
+      }
+      if (verifiedPayload.purpose !== 'password_reset_verified') {
+        return reply.code(400).send({ error: 'code_expired' });
+      }
+
       const email = normalizeEmail(req.body.email);
+      if (normalizeEmail(verifiedPayload.sub) !== email) {
+        return reply.code(400).send({ error: 'invalid_code' });
+      }
+
       const user = await User.findOne({ email });
       if (!user) return reply.code(400).send({ error: 'invalid_code' });
 
