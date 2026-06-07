@@ -10,6 +10,7 @@ const budgetSchema = new Schema(
 );
 
 budgetSchema.index({ userId: 1, createdAt: 1 });
+budgetSchema.index({ userId: 1, cat: 1 }, { unique: true });
 
 export type BudgetDoc = InferSchemaType<typeof budgetSchema>;
 export const Budget = model('Budget', budgetSchema);

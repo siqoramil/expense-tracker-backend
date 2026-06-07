@@ -18,6 +18,13 @@ const userSchema = new Schema(
     // catches slow distributed attacks against a single account.
     failedLogins: { type: Number, default: 0 },
     lockedUntil: { type: Date, default: null },
+    // Per-account brute-force lockout for password reset codes. Survives
+    // /password/forgot re-issuance (which resets the per-record attempt
+    // counter), so an attacker can't refresh their guess budget by
+    // re-requesting a code. Mirrors failedLogins/lockedUntil above; cleared
+    // on a successful reset.
+    resetFailedAttempts: { type: Number, default: 0 },
+    resetLockedUntil: { type: Date, default: null },
     pro: { type: Boolean, default: false },
     prefs: {
       lang: { type: String, enum: ['en', 'uz', 'ru', 'de', 'fr', 'es'], default: 'en' },

@@ -9,6 +9,7 @@ import {
   okResponse,
   transactionEntity,
 } from '../lib/schemas.js';
+import { Category } from '../models/Category.js';
 import { Transaction } from '../models/Transaction.js';
 import { Wallet } from '../models/Wallet.js';
 
@@ -68,7 +69,7 @@ const statsResponse = {
 const transactionsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
 
-  app.get<{ Querystring: { month?: string; kind?: 'income' | 'expense' } }>(
+  app.get<{ Querystring: { month?: string; kind?: 'income' | 'expense'; limit?: number } }>(
     '/',
     {
       schema: {
@@ -84,6 +85,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
               description: 'Filter to a single month (e.g. "2026-05").',
             },
             kind: { type: 'string', enum: ['income', 'expense'] },
+            limit: { type: 'integer', minimum: 1, maximum: 1000, default: 1000 },
           },
           additionalProperties: false,
         },
@@ -100,7 +102,10 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         filter.date = { $gte: gte, $lt: lt };
       }
       if (req.query.kind) filter.kind = req.query.kind;
-      const items = await Transaction.find(filter).sort({ date: -1, createdAt: -1 }).lean();
+      const items = await Transaction.find(filter)
+        .sort({ date: -1, createdAt: -1 })
+        .limit(req.query.limit ?? 1000)
+        .lean();
       return { items };
     },
   );
@@ -125,12 +130,14 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const tx = await withMaybeTransaction(async (session) => {
-        const wallet = await Wallet.findOne({ _id: req.body.wallet, userId: req.user.sub }, null, {
-          session,
-        });
-        if (!wallet) throw reply.code(404).send({ error: 'wallet_not_found' });
-        wallet.balance += delta(req.body.kind, req.body.amount);
-        await wallet.save({ session: session ?? undefined });
+        const catOk = await Category.exists({ _id: req.body.cat, userId: req.user.sub });
+        if (!catOk) throw reply.code(404).send({ error: 'category_not_found' });
+        const res = await Wallet.updateOne(
+          { _id: req.body.wallet, userId: req.user.sub },
+          { $inc: { balance: delta(req.body.kind, req.body.amount) } },
+          { session: session ?? undefined },
+        );
+        if (res.matchedCount === 0) throw reply.code(404).send({ error: 'wallet_not_found' });
         const [created] = await Transaction.create([{ ...req.body, userId: req.user.sub }], {
           session: session ?? undefined,
         });
@@ -169,22 +176,32 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
 
         const next = { ...old.toObject(), ...req.body };
 
-        // Reverse old wallet effect
-        const oldWallet = await Wallet.findOne({ _id: old.wallet, userId: req.user.sub }, null, {
-          session,
-        });
-        if (oldWallet) {
-          oldWallet.balance -= delta(old.kind, old.amount);
-          await oldWallet.save({ session: session ?? undefined });
+        if (req.body.cat) {
+          const catOk = await Category.exists({ _id: req.body.cat, userId: req.user.sub });
+          if (!catOk) throw reply.code(404).send({ error: 'category_not_found' });
         }
-        // Apply new wallet effect
-        const newWallet = await Wallet.findOne({ _id: next.wallet, userId: req.user.sub }, null, {
-          session,
-        });
-        if (newWallet) {
-          newWallet.balance += delta(next.kind, next.amount);
-          await newWallet.save({ session: session ?? undefined });
-        }
+
+        // The target wallet must be owned before any balance is mutated, so a
+        // failure here leaves no half-applied $inc behind.
+        const newWalletOk = await Wallet.findOne(
+          { _id: next.wallet, userId: req.user.sub },
+          { _id: 1 },
+          { session },
+        );
+        if (!newWalletOk) throw reply.code(404).send({ error: 'wallet_not_found' });
+
+        // Reverse old wallet effect (may be missing if the wallet was deleted).
+        await Wallet.updateOne(
+          { _id: old.wallet, userId: req.user.sub },
+          { $inc: { balance: -delta(old.kind, old.amount) } },
+          { session: session ?? undefined },
+        );
+        // Apply new wallet effect.
+        await Wallet.updateOne(
+          { _id: next.wallet, userId: req.user.sub },
+          { $inc: { balance: delta(next.kind, next.amount) } },
+          { session: session ?? undefined },
+        );
 
         Object.assign(old, req.body);
         await old.save({ session: session ?? undefined });
@@ -219,13 +236,11 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
           session,
         });
         if (!tx) throw reply.code(404).send({ error: 'not_found' });
-        const wallet = await Wallet.findOne({ _id: tx.wallet, userId: req.user.sub }, null, {
-          session,
-        });
-        if (wallet) {
-          wallet.balance -= delta(tx.kind, tx.amount);
-          await wallet.save({ session: session ?? undefined });
-        }
+        await Wallet.updateOne(
+          { _id: tx.wallet, userId: req.user.sub },
+          { $inc: { balance: -delta(tx.kind, tx.amount) } },
+          { session: session ?? undefined },
+        );
         await tx.deleteOne({ session: session ?? undefined });
       });
       return { ok: true };

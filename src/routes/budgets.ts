@@ -9,6 +9,7 @@ import {
   okResponse,
 } from '../lib/schemas.js';
 import { Budget } from '../models/Budget.js';
+import { Category } from '../models/Category.js';
 
 const budgetsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
@@ -50,12 +51,23 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
           200: itemResponse(budgetEntity),
           400: errorResponse,
           401: errorResponse,
+          404: errorResponse,
+          409: errorResponse,
         },
       },
     },
-    async (req) => {
-      const budget = await Budget.create({ ...req.body, userId: req.user.sub });
-      return { item: budget };
+    async (req, reply) => {
+      const catOk = await Category.exists({ _id: req.body.cat, userId: req.user.sub });
+      if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
+      try {
+        const budget = await Budget.create({ ...req.body, userId: req.user.sub });
+        return { item: budget };
+      } catch (err) {
+        if ((err as { code?: number }).code === 11000) {
+          return reply.code(409).send({ error: 'budget_exists' });
+        }
+        throw err;
+      }
     },
   );
 

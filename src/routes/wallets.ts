@@ -7,6 +7,7 @@ import {
   okResponse,
   walletEntity,
 } from '../lib/schemas.js';
+import { Transaction } from '../models/Transaction.js';
 import { Wallet } from '../models/Wallet.js';
 
 // POST accepts an initial `balance` to seed a wallet on creation. PATCH
@@ -136,16 +137,22 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         summary: 'Delete wallet',
         description:
-          'Permanently deletes a wallet. Transactions that referenced this wallet keep their reference but the wallet record is gone.',
+          'Permanently deletes a wallet. Deletion is blocked while any transaction still references the wallet, to avoid orphaned transactions.',
         params: idParams,
         response: {
           200: okResponse,
           401: errorResponse,
           404: errorResponse,
+          409: errorResponse,
         },
       },
     },
     async (req, reply) => {
+      const txCount = await Transaction.countDocuments({
+        wallet: req.params.id,
+        userId: req.user.sub,
+      });
+      if (txCount > 0) return reply.code(409).send({ error: 'wallet_not_empty' });
       const res = await Wallet.deleteOne({ _id: req.params.id, userId: req.user.sub });
       if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
       return { ok: true };

@@ -8,7 +8,9 @@ import {
   okResponse,
   recurringEntity,
 } from '../lib/schemas.js';
+import { Category } from '../models/Category.js';
 import { Recurring } from '../models/Recurring.js';
+import { Wallet } from '../models/Wallet.js';
 
 const recurringBody = {
   type: 'object',
@@ -73,10 +75,16 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
           200: itemResponse(recurringEntity),
           400: errorResponse,
           401: errorResponse,
+          404: errorResponse,
         },
       },
     },
-    async (req) => {
+    async (req, reply) => {
+      const body = req.body as { cat: string; wallet: string };
+      const catOk = await Category.exists({ _id: body.cat, userId: req.user.sub });
+      if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
+      const walletOk = await Wallet.exists({ _id: body.wallet, userId: req.user.sub });
+      if (!walletOk) return reply.code(404).send({ error: 'wallet_not_found' });
       const item = await Recurring.create({ ...(req.body as object), userId: req.user.sub });
       return { item };
     },
@@ -98,6 +106,15 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req, reply) => {
+      const body = req.body as { cat?: string; wallet?: string };
+      if (body.cat !== undefined) {
+        const catOk = await Category.exists({ _id: body.cat, userId: req.user.sub });
+        if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
+      }
+      if (body.wallet !== undefined) {
+        const walletOk = await Wallet.exists({ _id: body.wallet, userId: req.user.sub });
+        if (!walletOk) return reply.code(404).send({ error: 'wallet_not_found' });
+      }
       const item = await Recurring.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         req.body,

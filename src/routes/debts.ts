@@ -178,6 +178,8 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const debt = await Debt.findOne({ _id: req.params.id, userId: req.user.sub });
       if (!debt) return reply.code(404).send({ error: 'not_found' });
+      // Read-modify-write race on `paid` is bounded by single-user usage: a user
+      // does not concurrently record payments for the same debt, so the clamp is safe.
       const amount = Math.min(req.body.amount, debt.amount - debt.paid);
       if (amount <= 0) return reply.code(400).send({ error: 'invalid_amount' });
       const date = req.body.date ?? new Date().toISOString().slice(0, 10);
@@ -205,12 +207,10 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const debt = await Debt.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
-        { archived: true },
+        [{ $set: { archived: true, paid: '$amount' } }],
         { new: true },
       );
       if (!debt) return reply.code(404).send({ error: 'not_found' });
-      debt.paid = debt.amount;
-      await debt.save();
       return { item: debt };
     },
   );

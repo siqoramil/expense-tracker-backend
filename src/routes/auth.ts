@@ -63,6 +63,13 @@ const BCRYPT_ROUNDS = 12;
 const LOGIN_FAILURE_THRESHOLD = 5;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
 
+// Per-account brute-force lockout for password reset codes. The per-record
+// MAX_ATTEMPTS counter resets every time /password/forgot issues a fresh
+// code, so an attacker could otherwise refresh their guess budget at will.
+// These User-level fields survive re-issuance and cap total wrong guesses.
+const RESET_LOCKOUT_THRESHOLD = 5;
+const RESET_LOCKOUT_MS = 15 * 60 * 1000;
+
 // Short-lived JWT used by /password/verify-code to prove the code was
 // checked before /password/reset accepts it. exp=2min is tight enough
 // that a leaked token is useless by the time an attacker replays it.
@@ -75,8 +82,14 @@ const checkPasswordAuth = async (
   user: InstanceType<typeof User>,
   password: string,
 ): Promise<'locked' | 'invalid' | 'ok'> => {
-  if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) return 'locked';
-  const ok = await bcrypt.compare(password, user.passwordHash!);
+  if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+    // Equalize timing: run the same bcrypt work the non-locked path does so
+    // a locked account isn't measurably faster to probe (timing oracle).
+    // The result is intentionally discarded.
+    await bcrypt.compare(password, user.passwordHash);
+    return 'locked';
+  }
+  const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) {
     user.failedLogins = (user.failedLogins ?? 0) + 1;
     if (user.failedLogins >= LOGIN_FAILURE_THRESHOLD) {
@@ -595,8 +608,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
       if (!safeCodeEqual(record.code, req.body.code)) {
-        record.attempts += 1;
-        await record.save();
+        await VerificationCode.updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
         return reply.code(400).send({ error: 'invalid_code' });
       }
 
@@ -777,8 +789,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (!safeCodeEqual(record.code, req.body.code)) {
-        record.attempts += 1;
-        await record.save();
+        await VerificationCode.updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
         return reply.code(400).send({ error: 'invalid_code' });
       }
 
@@ -908,6 +919,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const user = await User.findOne({ email });
       if (!user) return reply.code(400).send({ error: 'invalid_code' });
 
+      // Per-account lockout survives /password/forgot re-issuance.
+      if (user.resetLockedUntil && user.resetLockedUntil.getTime() > Date.now()) {
+        return reply.code(429).send({ error: 'too_many_attempts' });
+      }
+
       const record = await VerificationCode.findOne({
         userId: user._id,
         purpose: 'password_reset',
@@ -920,8 +936,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
       if (!safeCodeEqual(record.code, req.body.code)) {
-        record.attempts += 1;
-        await record.save();
+        await VerificationCode.updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
+        user.resetFailedAttempts = (user.resetFailedAttempts ?? 0) + 1;
+        if (user.resetFailedAttempts >= RESET_LOCKOUT_THRESHOLD) {
+          user.resetLockedUntil = new Date(Date.now() + RESET_LOCKOUT_MS);
+          user.resetFailedAttempts = 0;
+        }
+        await user.save();
         return reply.code(400).send({ error: 'invalid_code' });
       }
 
@@ -992,6 +1013,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const user = await User.findOne({ email });
       if (!user) return reply.code(400).send({ error: 'invalid_code' });
 
+      // Per-account lockout survives /password/forgot re-issuance.
+      if (user.resetLockedUntil && user.resetLockedUntil.getTime() > Date.now()) {
+        return reply.code(429).send({ error: 'too_many_attempts' });
+      }
+
       const record = await VerificationCode.findOne({
         userId: user._id,
         purpose: 'password_reset',
@@ -1004,8 +1030,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(429).send({ error: 'too_many_attempts' });
       }
       if (!safeCodeEqual(record.code, req.body.code)) {
-        record.attempts += 1;
-        await record.save();
+        await VerificationCode.updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
+        user.resetFailedAttempts = (user.resetFailedAttempts ?? 0) + 1;
+        if (user.resetFailedAttempts >= RESET_LOCKOUT_THRESHOLD) {
+          user.resetLockedUntil = new Date(Date.now() + RESET_LOCKOUT_MS);
+          user.resetFailedAttempts = 0;
+        }
+        await user.save();
         return reply.code(400).send({ error: 'invalid_code' });
       }
 
@@ -1013,6 +1044,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       // Bumping passwordChangedAt revokes every JWT issued before this
       // moment — the auth preHandler refuses tokens whose iat is older.
       user.passwordChangedAt = new Date();
+      // Successful reset clears the per-account brute-force lockout.
+      user.resetFailedAttempts = 0;
+      user.resetLockedUntil = null;
       record.consumed = true;
       await Promise.all([user.save(), record.save()]);
 
