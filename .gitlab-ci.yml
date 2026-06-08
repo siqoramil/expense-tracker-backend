@@ -16,17 +16,6 @@ variables:
     paths:
       - node_modules/
 
-build:
-  <<: *node_template
-  stage: build
-  script:
-    - yarn install --frozen-lockfile
-    - yarn build
-  artifacts:
-    paths:
-      - dist/
-    expire_in: 1 hour
-
 typecheck:
   <<: *node_template
   stage: test
