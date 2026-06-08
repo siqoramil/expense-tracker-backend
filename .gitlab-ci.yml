@@ -4,10 +4,11 @@ stages:
   - deploy
 
 variables:
-  NODE_VERSION: '20'
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  IMAGE_LATEST: $CI_REGISTRY_IMAGE:latest
 
 .node_template: &node_template
-  image: node:${NODE_VERSION}-alpine
+  image: node:22-alpine
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
@@ -19,8 +20,6 @@ build:
   script:
     - yarn install --frozen-lockfile
     - yarn build
-  tags:
-    - docker-build
   artifacts:
     paths:
       - dist/
@@ -32,28 +31,53 @@ typecheck:
   script:
     - yarn install --frozen-lockfile
     - yarn typecheck
-  tags:
-    - docker-build
+
+docker-build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $IMAGE_TAG -t $IMAGE_LATEST .
+    - docker push $IMAGE_TAG
+    - docker push $IMAGE_LATEST
+  only:
+    - main
 
 deploy:
-  image: alpine:latest
   stage: deploy
-  tags:
+  image: alpine:latest
+  only:
+    - main
+  needs:
     - docker-build
+    - typecheck
   before_script:
-    - apk add --no-cache openssh-client rsync
+    - apk add --no-cache openssh-client
     - eval $(ssh-agent -s)
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
     - mkdir -p ~/.ssh
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
-    - rsync -avz --delete
-      --exclude node_modules
-      --exclude .git
-      --exclude .env
-      -e ssh
-      . ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
-    - ssh ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && yarn install
-      --production && (pm2 restart expense-tracker || pm2 start dist/index.js --name expense-tracker)"
-  only:
-    - main
+    - |
+      ssh ${DEPLOY_USER}@${DEPLOY_HOST} << 'EOF'
+        cd ~/expence-tracker-backend
+        docker login -u gitlab-ci-token -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+        docker pull ${IMAGE_TAG}
+        docker stop expense-tracker 2>/dev/null || true
+        docker rm expense-tracker 2>/dev/null || true
+        docker run -d \
+          --name expense-tracker \
+          --restart unless-stopped \
+          --init \
+          --env-file .env \
+          -e MONGO_URL=mongodb://172.17.0.1:10100/expense-tracker \
+          -e MONGO_ALLOW_INSECURE=true \
+          -e HOST=0.0.0.0 \
+          -e PORT=3000 \
+          -p 3001:3000 \
+          ${IMAGE_TAG}
+      EOF
