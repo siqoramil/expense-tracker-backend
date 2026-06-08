@@ -1,0 +1,66 @@
+# Expense Tracker backend — server + MongoDB.
+#
+# Mongo runs as a single-node replica set ("rs0") so the app's multi-document
+# writes (transaction + wallet balance) stay atomic via withMaybeTransaction.
+# The `mongo-init` one-shot initiates the set and waits for PRIMARY before the
+# server starts.
+#
+# Secrets (JWT_SECRET, GOOGLE_*, SMTP_*) are read from ./.env (gitignored).
+# Copy .env.example -> .env and fill it in before `docker compose up`.
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  mongo-init:
+    image: mongo:7
+    restart: 'no'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    entrypoint:
+      - bash
+      - -c
+      - |
+        mongosh --host mongo:27017 --quiet --eval '
+          try { rs.status() }
+          catch (e) {
+            rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongo:27017" }] });
+          }
+          while (!db.hello().isWritablePrimary) { sleep(500); }
+          print("replica set ready");
+        '
+
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '3000'
+      # Internal compose network: point the app at the replica set service.
+      # Overrides any MONGO_URL from .env.
+      MONGO_URL: mongodb://mongo:27017/expense-tracker?replicaSet=rs0
+      # Mongo is reachable only on the private compose network (not published),
+      # so a plaintext (non-TLS) connection is acceptable here.
+      MONGO_ALLOW_INSECURE: 'true'
+    ports:
+      - '3000:3000'
+
+volumes:
+  mongo-data:
