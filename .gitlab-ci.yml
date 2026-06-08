@@ -9,6 +9,8 @@ variables:
 
 .node_template: &node_template
   image: node:22-alpine
+  tags:
+    - docker-build
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
@@ -35,6 +37,8 @@ typecheck:
 docker-build:
   stage: build
   image: docker:27
+  tags:
+    - docker-build
   services:
     - docker:27-dind
   variables:
@@ -50,6 +54,8 @@ docker-build:
 deploy:
   stage: deploy
   image: alpine:latest
+  tags:
+    - docker-build
   only:
     - main
   needs:
