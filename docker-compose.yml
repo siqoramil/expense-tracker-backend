@@ -14,7 +14,10 @@ services:
     restart: unless-stopped
     command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
     ports:
-      - '10100:27017'
+      # Loopback-only: Docker port publishing bypasses ufw, so a bare
+      # "10100:27017" would expose an auth-less Mongo to the internet.
+      # 127.0.0.1 keeps it reachable for host-side debugging only.
+      - '127.0.0.1:10100:27017'
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -66,7 +69,10 @@ services:
       # so a plaintext (non-TLS) connection is acceptable here.
       MONGO_ALLOW_INSECURE: 'true'
     ports:
-      - '3000:3000'
+      # Loopback-only: TLS terminates at the host reverse proxy (Caddy/nginx),
+      # which forwards to 127.0.0.1:3000. The API must not be reachable
+      # directly over plain HTTP from the internet.
+      - '127.0.0.1:3000:3000'
 
 volumes:
   mongo-data:
