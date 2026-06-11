@@ -71,6 +71,7 @@ export const env = {
   // X-Forwarded-For. Off by default: trusting the header without a proxy
   // would let any client spoof their source IP.
   trustProxy: process.env.TRUST_PROXY === 'true',
+  enableSwagger: process.env.ENABLE_SWAGGER !== 'false' ,
   google: {
     webClientId: process.env.GOOGLE_WEB_CLIENT_ID ?? '',
     iosClientId: process.env.GOOGLE_IOS_CLIENT_ID ?? '',

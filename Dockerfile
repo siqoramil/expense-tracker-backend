@@ -15,14 +15,16 @@ RUN yarn build
 
 # ---- Runtime: production deps + compiled output only ----
 FROM node:22-alpine AS runtime
-ENV NODE_ENV=production
+ARG NODE_ENV=production
+ENV NODE_ENV=$NODE_ENV
 WORKDIR /app
 
-# Tini gives us a proper PID 1 so SIGTERM reaches Node (graceful shutdown).
-RUN apk add --no-cache tini
-
 COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile --production && yarn cache clean
+RUN if [ "$NODE_ENV" = "production" ]; then \
+      yarn install --frozen-lockfile --production && yarn cache clean; \
+    else \
+      yarn install --frozen-lockfile && yarn cache clean; \
+    fi
 
 COPY --from=builder /app/dist ./dist
 
@@ -35,5 +37,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/health || exit 1
 
-ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "dist/index.js"]

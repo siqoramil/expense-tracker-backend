@@ -1,30 +1,15 @@
 stages:
-  - build
   - test
   - deploy
 
-variables:
-  NODE_VERSION: '20'
-
 .node_template: &node_template
-  image: node:${NODE_VERSION}-alpine
+  image: node:22-alpine
+  tags:
+    - docker-build
   cache:
     key: ${CI_COMMIT_REF_SLUG}
     paths:
       - node_modules/
-
-build:
-  <<: *node_template
-  stage: build
-  script:
-    - yarn install --frozen-lockfile
-    - yarn build
-  tags:
-    - docker-build
-  artifacts:
-    paths:
-      - dist/
-    expire_in: 1 hour
 
 typecheck:
   <<: *node_template
@@ -32,28 +17,45 @@ typecheck:
   script:
     - yarn install --frozen-lockfile
     - yarn typecheck
-  tags:
-    - docker-build
 
 deploy:
-  image: alpine:latest
   stage: deploy
+  image: alpine:latest
   tags:
     - docker-build
+  only:
+    - main
+  needs:
+    - typecheck
   before_script:
-    - apk add --no-cache openssh-client rsync
+    - apk add --no-cache openssh-client git
     - eval $(ssh-agent -s)
     - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
     - mkdir -p ~/.ssh
     - echo -e "Host *\n\tStrictHostKeyChecking no\n" > ~/.ssh/config
   script:
-    - rsync -avz --delete
-      --exclude node_modules
-      --exclude .git
-      --exclude .env
-      -e ssh
-      . ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}
-    - ssh ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && yarn install
-      --production && (pm2 restart expense-tracker || pm2 start dist/index.js --name expense-tracker)"
-  only:
-    - main
+    - |
+      ssh ${DEPLOY_USER}@${DEPLOY_HOST} << EOF
+        set -e
+        REPO_DIR=~/expence-tracker-backend
+        if [ -d "\$REPO_DIR/.git" ]; then
+          cd \$REPO_DIR && git pull origin main
+        else
+          git clone git@gitlab.com:siqoramil/expence-tracker-backend.git \$REPO_DIR
+          cd \$REPO_DIR
+        fi
+        docker build -t expense-tracker .
+        docker stop expense-tracker 2>/dev/null || true
+        docker rm expense-tracker 2>/dev/null || true
+        docker run -d \
+          --name expense-tracker \
+          --restart unless-stopped \
+          --init \
+          --env-file .env \
+          -e MONGO_URL=mongodb://172.17.0.1:10100/expense-tracker \
+          -e MONGO_ALLOW_INSECURE=true \
+          -e HOST=0.0.0.0 \
+          -e PORT=3000 \
+          -p 3001:3000 \
+          expense-tracker
+      EOF

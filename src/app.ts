@@ -81,9 +81,7 @@ export const buildApp = async () => {
 
   await app.register(mongoPlugin);
   await app.register(authPlugin);
-  // Swagger UI / OpenAPI exposes the full route shape. Useful in dev for
-  // client work; in prod it's an attacker recon aid, so keep it off.
-  if (!isProd) await app.register(swaggerPlugin);
+  if (env.enableSwagger) await app.register(swaggerPlugin);
 
   app.get(
     '/health',
