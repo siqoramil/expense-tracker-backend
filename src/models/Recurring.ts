@@ -2,7 +2,7 @@ import { Schema, model, type InferSchemaType } from 'mongoose';
 
 const recurringSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     kind: { type: String, enum: ['income', 'expense'], required: true },
     cat: { type: Schema.Types.ObjectId, ref: 'Category', required: true },
     wallet: { type: Schema.Types.ObjectId, ref: 'Wallet', required: true },
@@ -14,6 +14,8 @@ const recurringSchema = new Schema(
   },
   { timestamps: true },
 );
+
+recurringSchema.index({ userId: 1, nextDate: 1 });
 
 export type RecurringDoc = InferSchemaType<typeof recurringSchema>;
 export const Recurring = model('Recurring', recurringSchema);

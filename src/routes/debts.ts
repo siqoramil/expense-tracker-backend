@@ -85,7 +85,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
     async (req) => {
       const filter: Record<string, unknown> = { userId: req.user.sub };
       if (req.query.archived !== 'true') filter.archived = { $ne: true };
-      const items = await Debt.find(filter).sort({ createdAt: -1 }).lean();
+      const items = await Debt.find(filter).sort({ createdAt: -1 }).limit(1000).lean();
       return { items };
     },
   );
@@ -130,7 +130,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
       const debt = await Debt.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         req.body,
-        { new: true },
+        { new: true, lean: true },
       );
       if (!debt) return reply.code(404).send({ error: 'not_found' });
       return { item: debt };
@@ -208,7 +208,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
       const debt = await Debt.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         [{ $set: { archived: true, paid: '$amount' } }],
-        { new: true },
+        { new: true, lean: true },
       );
       if (!debt) return reply.code(404).send({ error: 'not_found' });
       return { item: debt };

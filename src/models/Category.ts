@@ -2,7 +2,7 @@ import { Schema, model, type InferSchemaType } from 'mongoose';
 
 const categorySchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     label: {
       en: { type: String, required: true },
       uz: { type: String, required: true },
@@ -13,6 +13,8 @@ const categorySchema = new Schema(
   },
   { timestamps: true },
 );
+
+categorySchema.index({ userId: 1, createdAt: 1 });
 
 export type CategoryDoc = InferSchemaType<typeof categorySchema>;
 export const Category = model('Category', categorySchema);

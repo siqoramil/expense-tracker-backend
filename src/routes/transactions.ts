@@ -176,18 +176,17 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
 
         const next = { ...old.toObject(), ...req.body };
 
-        if (req.body.cat) {
-          const catOk = await Category.exists({ _id: req.body.cat, userId: req.user.sub });
-          if (!catOk) throw reply.code(404).send({ error: 'category_not_found' });
-        }
-
+        // Run the category and wallet ownership checks in parallel — both are
+        // reads and are independent of each other.
+        const [catOk, newWalletOk] = await Promise.all([
+          req.body.cat
+            ? Category.exists({ _id: req.body.cat, userId: req.user.sub })
+            : Promise.resolve(true as unknown as { _id: unknown } | null),
+          Wallet.findOne({ _id: next.wallet, userId: req.user.sub }, { _id: 1 }, { session }),
+        ]);
+        if (req.body.cat && !catOk) throw reply.code(404).send({ error: 'category_not_found' });
         // The target wallet must be owned before any balance is mutated, so a
         // failure here leaves no half-applied $inc behind.
-        const newWalletOk = await Wallet.findOne(
-          { _id: next.wallet, userId: req.user.sub },
-          { _id: 1 },
-          { session },
-        );
         if (!newWalletOk) throw reply.code(404).send({ error: 'wallet_not_found' });
 
         // Reverse old wallet effect (may be missing if the wallet was deleted).
@@ -278,6 +277,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         count: number;
       }>([
         { $match: { userId: new Types.ObjectId(req.user.sub), date: { $gte: gte, $lt: lt } } },
+        { $project: { _id: 0, kind: 1, amount: 1 } },
         { $group: { _id: '$kind', sum: { $sum: '$amount' }, count: { $sum: 1 } } },
       ]);
       let income = 0;

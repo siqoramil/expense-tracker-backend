@@ -124,7 +124,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
       const wallet = await Wallet.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         req.body,
-        { new: true },
+        { new: true, lean: true },
       );
       if (!wallet) return reply.code(404).send({ error: 'not_found' });
       return { item: wallet };

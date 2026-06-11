@@ -2,7 +2,7 @@ import { Schema, model, type InferSchemaType } from 'mongoose';
 
 const walletSchema = new Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     name: {
       en: { type: String, required: true },
       uz: { type: String, required: true },
@@ -13,6 +13,8 @@ const walletSchema = new Schema(
   },
   { timestamps: true },
 );
+
+walletSchema.index({ userId: 1, createdAt: 1 });
 
 export type WalletDoc = InferSchemaType<typeof walletSchema>;
 export const Wallet = model('Wallet', walletSchema);

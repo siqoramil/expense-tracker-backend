@@ -94,7 +94,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
       const budget = await Budget.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         req.body,
-        { new: true },
+        { new: true, lean: true },
       );
       if (!budget) return reply.code(404).send({ error: 'not_found' });
       return { item: budget };

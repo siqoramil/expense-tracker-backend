@@ -12,12 +12,21 @@ import { Notification } from '../models/Notification.js';
 const notificationsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
 
-  app.get(
+  app.get<{ Querystring: { limit?: number; skip?: number } }>(
     '/',
     {
       schema: {
         summary: 'List notifications',
-        description: 'Returns all notifications for the authenticated user, newest first.',
+        description:
+          'Returns notifications for the authenticated user, newest first. Supports limit/skip pagination (default limit: 100).',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
+            skip: { type: 'integer', minimum: 0, default: 0 },
+          },
+          additionalProperties: false,
+        },
         response: {
           200: itemsResponse(notificationEntity),
           401: errorResponse,
@@ -25,7 +34,13 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const items = await Notification.find({ userId: req.user.sub }).sort({ date: -1 }).lean();
+      const limit = req.query.limit ?? 100;
+      const skip = req.query.skip ?? 0;
+      const items = await Notification.find({ userId: req.user.sub })
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
       return { items };
     },
   );
@@ -54,7 +69,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
       const item = await Notification.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         { read: true },
-        { new: true },
+        { new: true, lean: true },
       );
       if (!item) return reply.code(404).send({ error: 'not_found' });
       return { item };

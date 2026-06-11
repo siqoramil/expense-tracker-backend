@@ -2,7 +2,6 @@ import fastifyJwt from '@fastify/jwt';
 import { type preHandlerHookHandler } from 'fastify';
 import fp from 'fastify-plugin';
 import { env } from '../lib/env.js';
-import { User } from '../models/User.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -14,10 +13,12 @@ declare module '@fastify/jwt' {
   interface FastifyJWT {
     // `purpose` scopes single-use tokens (e.g. password_reset_verified) so a
     // token minted for one flow can't be replayed in another.
-    payload: { sub: string; purpose?: string };
+    // `pca` (passwordChangedAt) is epoch-seconds at sign time; lets the auth
+    // hook enforce revocation without a Mongo lookup per request.
+    payload: { sub: string; purpose?: string; pca?: number };
     // `iat`/`exp` are added by the signer; expose them so the auth hook can
     // enforce passwordChangedAt revocation.
-    user: { sub: string; iat: number; exp: number; purpose?: string };
+    user: { sub: string; iat: number; exp: number; purpose?: string; pca?: number };
   }
 }
 
@@ -35,12 +36,11 @@ export default fp(async (app) => {
     }
 
     // Token-level revocation: reject tokens minted before the user's last
-    // credential change. Cheap projection — only one indexed field.
-    const user = await User.findById(req.user.sub).select('passwordChangedAt').lean();
-    if (!user) {
-      return reply.code(401).send({ error: 'unauthorized' });
-    }
-    const changedSec = Math.floor((user.passwordChangedAt?.getTime() ?? 0) / 1000);
+    // credential change. `pca` (passwordChangedAt epoch-seconds) is embedded
+    // at sign time so no Mongo lookup is needed per request. Old tokens that
+    // predate this claim treat missing pca as 0 (always-valid) to avoid
+    // breaking existing sessions during the rollout.
+    const changedSec = req.user.pca ?? 0;
     // 1s skew tolerance — JWT iat and DB write can land in the same second.
     if (req.user.iat + 1 < changedSec) {
       return reply.code(401).send({ error: 'token_revoked' });

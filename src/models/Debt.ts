@@ -24,7 +24,7 @@ const debtSchema = new Schema(
   { timestamps: true },
 );
 
-debtSchema.index({ userId: 1, archived: 1 });
+debtSchema.index({ userId: 1, archived: 1, createdAt: -1 });
 
 export type DebtDoc = InferSchemaType<typeof debtSchema>;
 export const Debt = model('Debt', debtSchema);

@@ -19,6 +19,7 @@ const notificationSchema = new Schema(
 );
 
 notificationSchema.index({ userId: 1, read: 1 });
+notificationSchema.index({ userId: 1, date: -1 });
 
 export type NotificationDoc = InferSchemaType<typeof notificationSchema>;
 export const Notification = model('Notification', notificationSchema);

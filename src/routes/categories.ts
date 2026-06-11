@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify';
+import { seedDefaultCategories } from '../lib/defaultCategories.js';
 import {
   categoryEntity,
   errorResponse,
@@ -58,6 +59,15 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
+      const count = await Category.countDocuments({ userId: req.user.sub });
+      if (count === 0) {
+        // Backfill existing accounts that predate default-category seeding.
+        // ordered:false in insertMany makes this race-tolerant (duplicate-key
+        // errors on a concurrent seed are swallowed per-document).
+        await seedDefaultCategories(req.user.sub).catch(() => {
+          // Best-effort: a seed failure must not prevent the list from returning.
+        });
+      }
       const items = await Category.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
       return { items };
     },
@@ -109,7 +119,7 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
       const cat = await Category.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         req.body,
-        { new: true },
+        { new: true, lean: true },
       );
       if (!cat) return reply.code(404).send({ error: 'not_found' });
       return { item: cat };

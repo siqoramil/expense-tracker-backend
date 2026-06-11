@@ -59,7 +59,7 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      const items = await Recurring.find({ userId: req.user.sub }).sort({ nextDate: 1 }).lean();
+      const items = await Recurring.find({ userId: req.user.sub }).sort({ nextDate: 1 }).limit(1000).lean();
       return { items };
     },
   );
@@ -81,9 +81,11 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req, reply) => {
       const body = req.body as { cat: string; wallet: string };
-      const catOk = await Category.exists({ _id: body.cat, userId: req.user.sub });
+      const [catOk, walletOk] = await Promise.all([
+        Category.exists({ _id: body.cat, userId: req.user.sub }),
+        Wallet.exists({ _id: body.wallet, userId: req.user.sub }),
+      ]);
       if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
-      const walletOk = await Wallet.exists({ _id: body.wallet, userId: req.user.sub });
       if (!walletOk) return reply.code(404).send({ error: 'wallet_not_found' });
       const item = await Recurring.create({ ...(req.body as object), userId: req.user.sub });
       return { item };
@@ -118,7 +120,7 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       const item = await Recurring.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
         req.body,
-        { new: true },
+        { new: true, lean: true },
       );
       if (!item) return reply.code(404).send({ error: 'not_found' });
       return { item };

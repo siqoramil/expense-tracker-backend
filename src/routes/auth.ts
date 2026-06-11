@@ -12,6 +12,7 @@ import {
   userResponse,
 } from '../lib/schemas.js';
 import { DUMMY_PASSWORD_HASH, safeCodeEqual } from '../lib/security.js';
+import { seedDefaultCategories } from '../lib/defaultCategories.js';
 import { Budget } from '../models/Budget.js';
 import { Category } from '../models/Category.js';
 import { Debt } from '../models/Debt.js';
@@ -144,14 +145,15 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const { password, name } = req.body;
       const email = normalizeEmail(req.body.email);
-      const existing = await User.findOne({ email });
-      if (existing) return reply.code(409).send({ error: 'email_taken' });
-
       const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
       const avatar = initialsFrom(name);
       try {
         const user = await User.create({ email, passwordHash, name, avatar });
-        const token = app.jwt.sign({ sub: user.id as string });
+        const pca = Math.floor((user.passwordChangedAt?.getTime() ?? 0) / 1000);
+        const token = app.jwt.sign({ sub: user.id as string, pca });
+        seedDefaultCategories(user._id).catch((err) =>
+          app.log.error({ err }, 'seedDefaultCategories failed on register'),
+        );
         return { token, user: toUserDTO(user) };
       } catch (err) {
         if (isDuplicateKeyError(err)) {
@@ -212,7 +214,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       if (result === 'locked') return reply.code(423).send({ error: 'account_locked' });
       if (result === 'invalid') return reply.code(401).send({ error: 'invalid_credentials' });
 
-      const token = app.jwt.sign({ sub: user.id as string });
+      const pca = Math.floor((user.passwordChangedAt?.getTime() ?? 0) / 1000);
+      const token = app.jwt.sign({ sub: user.id as string, pca });
       return { token, user: toUserDTO(user) };
     },
   );
@@ -301,12 +304,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           }
           throw err;
         }
+        seedDefaultCategories(user._id).catch((err) =>
+          app.log.error({ err }, 'seedDefaultCategories failed on google register'),
+        );
       } else if (!user.avatar && picture) {
         user.avatar = picture;
         await user.save();
       }
 
-      const token = app.jwt.sign({ sub: user.id as string });
+      const pca = Math.floor((user.passwordChangedAt?.getTime() ?? 0) / 1000);
+      const token = app.jwt.sign({ sub: user.id as string, pca });
       return { token, user: toUserDTO(user) };
     },
   );
@@ -485,6 +492,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           401: errorResponse,
           404: errorResponse,
           429: errorResponse,
+          503: errorResponse,
         },
       },
     },
@@ -507,7 +515,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         expiresAt: new Date(Date.now() + CODE_TTL_MS),
       });
 
-      await sendVerificationCode(user.email, code, 'account deletion');
+      // Surface mail failures as an app-level 503 the client can map to a
+      // user-readable message, instead of a generic 500. The orphaned code
+      // record is harmless — it expires in 10 minutes.
+      try {
+        await sendVerificationCode(user.email, code, 'account deletion');
+      } catch {
+        return reply.code(503).send({ error: 'mail_send_failed' });
+      }
       return { sent: true, expiresInSeconds: CODE_TTL_MS / 1000 };
     },
   );
@@ -660,6 +675,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           401: errorResponse,
           404: errorResponse,
           429: errorResponse,
+          503: errorResponse,
         },
       },
     },
@@ -693,7 +709,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           expiresAt: new Date(Date.now() + CODE_TTL_MS),
         });
 
-        await sendVerificationCode(newEmail, code, 'email change');
+        try {
+          await sendVerificationCode(newEmail, code, 'email change');
+        } catch {
+          return reply.code(503).send({ error: 'mail_send_failed' });
+        }
       }
       return { sent: true, expiresInSeconds: CODE_TTL_MS / 1000 };
     },
@@ -1050,7 +1070,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       record.consumed = true;
       await Promise.all([user.save(), record.save()]);
 
-      const token = app.jwt.sign({ sub: user.id as string });
+      const pca = Math.floor((user.passwordChangedAt?.getTime() ?? 0) / 1000);
+      const token = app.jwt.sign({ sub: user.id as string, pca });
       return { token, user: toUserDTO(user) };
     },
   );

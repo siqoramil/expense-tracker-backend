@@ -1,166 +1,341 @@
-# Expense Tracker — Server
+<div align="center">
 
-Fastify + TypeScript backend for the Expense Tracker mobile app. Persists user data in MongoDB and exposes a REST API consumed by the React Native client.
+# ⚡ ExTracker — Server API
 
-Production deployment: `https://expensetracker.ovrin.uz`
+**The secure, fast REST backend powering the ExTracker finance app.**
 
-## Stack
+[![Fastify](https://img.shields.io/badge/Fastify-5.x-000000?style=flat-square&logo=fastify&logoColor=white)](https://fastify.dev)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Mongoose_8-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://mongoosejs.com)
+[![Node](https://img.shields.io/badge/Node.js-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Vitest](https://img.shields.io/badge/Tested_with-Vitest-6E9F18?style=flat-square&logo=vitest&logoColor=white)](https://vitest.dev)
+[![License](https://img.shields.io/badge/License-Private-red?style=flat-square)](../LICENSE)
 
-- **Fastify 5** — HTTP server with `@fastify/helmet`, `@fastify/cors`, `@fastify/rate-limit`
-- **MongoDB / Mongoose 8** — persistence (replica set required in production for transactional `/tx` writes; standalone mongo falls back to non-transactional writes)
-- **@fastify/jwt** — auth tokens (HS256, 7-day expiry, revoked on password reset)
-- **bcryptjs** — password hashing (12 rounds)
-- **google-auth-library** — Google ID-token verification
-- **Nodemailer** — SMTP for email verification codes
-- **@fastify/swagger** + **swagger-ui** — API docs at `/docs`
-- **TypeScript 5.7** (Node 20+, ESM)
+**Production:** `https://expensetracker.ovrin.uz`
 
-## Requirements
+</div>
+
+---
+
+## ✨ Features
+
+- 🔐 **JWT authentication** — HS256, configurable expiry, automatic revocation on password reset via `passwordChangedAt` claim check
+- 🔑 **Email + password** — bcrypt (12 rounds), per-account brute-force lockout (5 failures → 15-minute lock), timing-safe dummy hash for unknown-email probes
+- 🌐 **Google Sign-In** — server-side `id_token` verification via `google-auth-library`; safe explicit linking flow to prevent account-takeover
+- 📧 **Email verification codes** — 6-digit OTP for password reset, email change, and account deletion; 10-minute TTL, 5-attempt cap, timing-safe comparison
+- 💳 **Wallets** — create/update/delete wallets with name, icon, and color; balance is derived exclusively from transaction writes, never set directly via PATCH
+- 💸 **Transactions** — income/expense entries with category + wallet; atomic balance update in a Mongo session when a replica set is available
+- 📊 **Monthly stats** — aggregated income, expense, net, and count per month via a single `$group` aggregation
+- 📁 **Categories** — bilingual (EN/UZ) income/expense categories; auto-seeded with defaults on first use
+- 🏦 **Debts** — `owe_me` / `i_owe` direction, payment ledger with per-payment clamping, archive action
+- 📅 **Budgets** — per-category spending limits with unique-index enforcement
+- 🔁 **Recurring** — weekly/monthly recurring entries linked to a wallet and category
+- 🔔 **Notifications** — server-generated only (budget breach, overdue debt, scheduled bill); client can list, mark read/all-read, and delete
+- 🛡️ **Security hardening** — `@fastify/helmet`, strict CORS (origin-anchored regex), global 200 req/min rate limit, per-route tighter caps on credential routes (5–10 req/min), `additionalProperties: false` on all bodies (no silent-strip)
+- 📝 **Swagger UI** — full OpenAPI schema at `/docs` in development; disabled in production
+
+---
+
+## 🧱 Tech Stack
+
+| Layer | Library | Version |
+|---|---|---|
+| 🚀 HTTP server | Fastify | ^5.1 |
+| 🗄️ ODM | Mongoose | ^8.8 |
+| 🔏 Auth tokens | @fastify/jwt | ^10 |
+| 🔒 Password hashing | bcryptjs | ^2.4 |
+| 🌐 Google auth | google-auth-library | ^10.6 |
+| 📬 Mailer | Nodemailer | ^8.0 |
+| 🛡️ Security headers | @fastify/helmet | ^13 |
+| 🌍 CORS | @fastify/cors | ^10 |
+| ⏱️ Rate limiting | @fastify/rate-limit | ^10.3 |
+| 📖 API docs | @fastify/swagger + swagger-ui | ^9 / ^5 |
+| 🧪 Testing | Vitest | ^2.1 |
+| 🔷 Language | TypeScript | ^5.7 |
+| ⚙️ Runtime | Node.js | >=20 |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
 
 - Node.js `>=20`
 - Yarn
-- MongoDB running locally on port `10100` (or update `MONGO_URL`). For atomic `/tx` writes use a replica set; a single-node `rs0` works fine for dev.
-- (Optional) Gmail App Password for SMTP — without it, verification codes are logged to the console
-- (Optional) Google OAuth Client IDs — without them, Google sign-in is disabled
+- MongoDB running locally (default port `27017`)
 
-## Setup
+For **atomic** `/tx` writes, initialise a single-node replica set:
 
 ```bash
+mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+# then set in .env:
+# MONGO_URL=mongodb://localhost:27017/expense-tracker?replicaSet=rs0
+```
+
+Without a replica set the server still runs — transaction writes fall back to non-atomic (fine for development, not recommended for production).
+
+### Install & run
+
+```bash
+# 1. Install dependencies
 yarn install
+
+# 2. Copy and edit environment variables
 cp .env.example .env
-# edit .env: set JWT_SECRET, MONGO_URL, and SMTP / Google credentials
+#    — set JWT_SECRET (32+ chars), MONGO_URL, and optionally SMTP / Google creds
+
+# 3. Start in dev mode (tsx watch + pino-pretty hot-reload)
+yarn dev
+
+# 4. Open the interactive API docs
+open http://localhost:3000/docs
 ```
 
-Start a local MongoDB on port 10100 (Homebrew example):
+### Production build
 
 ```bash
-brew services start mongodb-community
+yarn build          # tsc → dist/
+yarn start          # node dist/index.js
 ```
 
-Verify MongoDB is listening on the expected port:
+Run behind an nginx reverse proxy with TLS termination. Set `NODE_ENV=production` and `TRUST_PROXY=true`.
 
-```bash
-lsof -iTCP:10100 -sTCP:LISTEN
-```
+---
 
-For atomic `/tx` writes (transaction + wallet balance update), initialise a single-node replica set:
+## ⚙️ Environment Variables
 
-```bash
-mongosh --port 10100 --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "localhost:10100"}]})'
-# then point MONGO_URL at the replica set:
-# MONGO_URL=mongodb://localhost:10100/expense-tracker?replicaSet=rs0
-```
+Validated at boot in `src/lib/env.ts`. The server refuses to start if a required variable is missing or a production-safety rule is violated.
 
-Without a replica set the server still runs — `/tx` writes execute without a session and are non-atomic. That's fine for dev but **prod should always run a replica set**.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MONGO_URL` | ✅ | — | MongoDB connection string. In production must use `mongodb+srv://` or include `?tls=true`, unless `MONGO_ALLOW_INSECURE=true` is set. |
+| `JWT_SECRET` | ✅ | — | HS256 signing secret. Must be **at least 32 characters**. Generate with: `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
+| `PORT` | — | `3000` | HTTP listen port. |
+| `HOST` | — | `0.0.0.0` | HTTP listen host. |
+| `NODE_ENV` | — | `development` | Set to `production` for JSON logs, strict CORS, and redacted validation errors. |
+| `JWT_EXPIRES_IN` | — | `7d` | Token lifetime (format: `\d+[smhd]`, e.g. `7d`, `1h`). Production enforces a minimum of `1h`. |
+| `CORS_ORIGINS` | — | — | Comma-separated origin whitelist for production (e.g. `https://app.example.com`). Dev auto-allows localhost and RFC-1918 addresses. |
+| `TRUST_PROXY` | — | `false` | Set `true` behind a reverse proxy so `X-Forwarded-For` is used for per-IP rate limiting. **Never enable without a proxy** — clients could spoof their IP. |
+| `MONGO_ALLOW_INSECURE` | — | `false` | Escape hatch for plaintext Mongo on a private network in production. |
+| `GOOGLE_WEB_CLIENT_ID` | — | — | Google OAuth Web client ID. Required for `/auth/google`. |
+| `GOOGLE_IOS_CLIENT_ID` | — | — | Google OAuth iOS client ID. |
+| `GOOGLE_ANDROID_CLIENT_ID` | — | — | Google OAuth Android client ID. |
+| `SMTP_HOST` | — | `smtp.gmail.com` | SMTP server host. |
+| `SMTP_PORT` | — | `465` | SMTP server port. |
+| `SMTP_USER` | — | — | SMTP username / Gmail address. If unset, verification codes are logged (dev only). |
+| `SMTP_PASS` | — | — | SMTP password / Gmail App Password. |
+| `SMTP_FROM` | — | — | From address, e.g. `ExTracker <noreply@example.com>`. |
 
-## Scripts
+---
 
-| Command          | Description                                             |
-| ---------------- | ------------------------------------------------------- |
-| `yarn dev`       | Run with `tsx watch` + pino-pretty logging (hot-reload) |
-| `yarn build`     | Compile TypeScript to `dist/`                           |
-| `yarn start`     | Run compiled output (`node dist/index.js`)              |
-| `yarn typecheck` | Type-check without emitting                             |
-| `yarn test`      | Run Vitest suite (smoke + schema validation)            |
+## 🔌 API Overview
 
-## Environment variables
+All responses are JSON. Errors follow `{ "error": "<snake_case_code>" }`. Unknown request fields are rejected with `400 bad_request`. Rate limit: **200 req/min per IP** globally, with tighter per-route caps on credential endpoints.
 
-Defined in `src/lib/env.ts`. See `.env.example` for the full template.
+`Authorization: Bearer <token>` is required on all 🔒 routes.
 
-| Variable                   | Required | Default          | Notes                                                                                                                                                                                                                               |
-| -------------------------- | -------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MONGO_URL`                | Yes      | —                | e.g. `mongodb://localhost:10100/expense-tracker` (append `?replicaSet=rs0` for transactional writes)                                                                                                                                |
-| `JWT_SECRET`               | Yes      | —                | Long random string                                                                                                                                                                                                                  |
-| `PORT`                     | No       | `3000`           |                                                                                                                                                                                                                                     |
-| `HOST`                     | No       | `0.0.0.0`        |                                                                                                                                                                                                                                     |
-| `JWT_EXPIRES_IN`           | No       | `7d`             |                                                                                                                                                                                                                                     |
-| `NODE_ENV`                 | No       | `development`    | `production` enables stricter CORS + JSON logs and hides validation detail in error responses                                                                                                                                       |
-| `CORS_ORIGINS`             | No       | —                | Comma-separated whitelist (production only)                                                                                                                                                                                         |
-| `TRUST_PROXY`              | No       | `false`          | Set `true` when behind a reverse proxy / TLS terminator. Makes Fastify honour `X-Forwarded-For` so per-IP rate limits don't lump everyone onto one bucket. **Do not enable without a proxy** — clients could spoof their source IP. |
-| `GOOGLE_WEB_CLIENT_ID`     | No       | —                | Google OAuth Web client ID                                                                                                                                                                                                          |
-| `GOOGLE_IOS_CLIENT_ID`     | No       | —                | Google OAuth iOS client ID                                                                                                                                                                                                          |
-| `GOOGLE_ANDROID_CLIENT_ID` | No       | —                | Google OAuth Android client ID                                                                                                                                                                                                      |
-| `SMTP_HOST`                | No       | `smtp.gmail.com` |                                                                                                                                                                                                                                     |
-| `SMTP_PORT`                | No       | `465`            |                                                                                                                                                                                                                                     |
-| `SMTP_USER` / `SMTP_PASS`  | No       | —                | If empty, codes are printed to console                                                                                                                                                                                              |
-| `SMTP_FROM`                | No       | —                | e.g. `Expense Tracker <noreply@example.com>`                                                                                                                                                                                        |
+### 🏥 System
 
-In **development**, CORS automatically allows requests with no `Origin` (mobile / native) and any `localhost`, `127.0.0.1`, `10.x.x.x`, or `192.168.x.x` host (the regex anchors on the host boundary, so `https://192.168.1evil.com` is rejected). In **production**, only origins listed in `CORS_ORIGINS` are accepted.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | — | Liveness probe, returns `{ ok, ts }` |
+| `GET` | `/docs` | — | Swagger UI (development only) |
 
-## API surface
+### 🔐 Auth — `/auth`
 
-All routes return JSON. Errors use the shape `{ "error": "<snake_case_code>" }` with appropriate HTTP status. Body validation is strict — unknown fields are rejected as `400 bad_request` (Fastify v5's silent-strip default is disabled). Rate limit: **200 requests/minute per IP** globally, with tighter caps on credential-touching auth routes (5–10/min).
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/auth/register` | — | Create account; seeds default categories; returns `{ token, user }` |
+| `POST` | `/auth/login` | — | Email + password sign-in; returns `{ token, user }` |
+| `POST` | `/auth/google` | — | Exchange Google `id_token`; creates or returns user |
+| `POST` | `/auth/google/link` | 🔒 | Link Google identity to current password account |
+| `GET` | `/auth/me` | 🔒 | Current user profile |
+| `PATCH` | `/auth/me` | 🔒 | Update name, avatar, or preferences |
+| `POST` | `/auth/password/forgot` | — | Send 6-digit reset code via email |
+| `POST` | `/auth/password/verify-code` | — | Validate reset code; returns short-lived `verifiedToken` (2 min) |
+| `POST` | `/auth/password/reset` | — | Set new password using code + `verifiedToken`; revokes all prior JWTs |
+| `POST` | `/auth/email/request-change` | 🔒 | Send code to proposed new email address |
+| `POST` | `/auth/email/verify-change` | 🔒 | Confirm code + re-auth; applies email change; revokes prior JWTs |
+| `POST` | `/auth/account/request-delete` | 🔒 | Email a 6-digit account-deletion code |
+| `POST` | `/auth/account/confirm-delete` | 🔒 | Confirm code + re-auth; cascades-deletes all user data |
 
-| Route                               | Auth | Purpose                                                                                                                                                                                             |
-| ----------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /health`                       | —    | Liveness probe                                                                                                                                                                                      |
-| `GET /docs`                         | —    | Swagger UI                                                                                                                                                                                          |
-| `POST /auth/register`               | —    | Create account, returns `{ token, user }`                                                                                                                                                           |
-| `POST /auth/login`                  | —    | Email + password sign-in                                                                                                                                                                            |
-| `POST /auth/google`                 | —    | Exchange Google `id_token` for app token. Returns `409 account_link_required` if the email already has a password account — the user must sign in with their password and call `/auth/google/link`. |
-| `POST /auth/google/link`            | JWT  | Link a Google identity onto the current account (Google email must match the account email)                                                                                                         |
-| `POST /auth/password/forgot`        | —    | Send reset code via SMTP                                                                                                                                                                            |
-| `POST /auth/password/verify-code`   | —    | Validate reset code                                                                                                                                                                                 |
-| `POST /auth/password/reset`         | —    | Set new password using code; bumps `passwordChangedAt` and **revokes every previously-issued JWT**                                                                                                  |
-| `GET /auth/me`                      | JWT  | Current user profile                                                                                                                                                                                |
-| `PATCH /auth/me`                    | JWT  | Update name / avatar / prefs (prefs schema is whitelisted)                                                                                                                                          |
-| `POST /auth/email/request-change`   | JWT  | Send code to new email                                                                                                                                                                              |
-| `POST /auth/email/verify-change`    | JWT  | Apply email change                                                                                                                                                                                  |
-| `POST /auth/account/request-delete` | JWT  | Email a 6-digit account-deletion code                                                                                                                                                               |
-| `POST /auth/account/confirm-delete` | JWT  | Confirm code **plus** re-auth (password for password accounts; fresh Google `idToken` for Google-only accounts), then permanently delete the user and all data                                      |
-| `/categories`                       | JWT  | User-defined transaction categories                                                                                                                                                                 |
-| `/wallets`                          | JWT  | Wallets / accounts                                                                                                                                                                                  |
-| `/tx`                               | JWT  | Transactions (income / expense) — writes use a Mongo session when the deployment supports it                                                                                                        |
-| `/debts`                            | JWT  | Debtor & creditor tracking                                                                                                                                                                          |
-| `/budgets`                          | JWT  | Monthly budgets                                                                                                                                                                                     |
-| `/recurring`                        | JWT  | Recurring transactions                                                                                                                                                                              |
-| `/notifs`                           | JWT  | Notifications — **read-only from the client** (list, mark read, delete). Server-only events generate the records.                                                                                   |
+### 💸 Transactions — `/tx`
 
-JWT is sent as `Authorization: Bearer <token>`.
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/tx` | 🔒 | List transactions (filter by `?month=YYYY-MM`, `?kind`, `?limit`) |
+| `POST` | `/tx` | 🔒 | Create transaction; atomically updates wallet balance |
+| `PATCH` | `/tx/:id` | 🔒 | Update transaction; reverses old wallet effect and applies new one |
+| `DELETE` | `/tx/:id` | 🔒 | Delete transaction; atomically reverses wallet balance |
+| `GET` | `/tx/stats/:month` | 🔒 | Aggregated income, expense, net, and count for `YYYY-MM` |
 
-Browse the full schema at `/docs` while the server is running.
+### 💳 Wallets — `/wallets`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/wallets` | 🔒 | List all wallets |
+| `POST` | `/wallets` | 🔒 | Create wallet (name, icon, color, optional seed balance) |
+| `PATCH` | `/wallets/:id` | 🔒 | Update name, icon, or color (balance is not patchable here) |
+| `DELETE` | `/wallets/:id` | 🔒 | Delete wallet (blocked if any transactions reference it) |
+
+### 📁 Categories — `/categories`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/categories` | 🔒 | List categories; auto-seeds defaults on first request |
+| `POST` | `/categories` | 🔒 | Create bilingual (EN/UZ) income or expense category |
+| `PATCH` | `/categories/:id` | 🔒 | Update label, icon, color, or kind |
+| `DELETE` | `/categories/:id` | 🔒 | Delete category |
+
+### 🏦 Debts — `/debts`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/debts` | 🔒 | List debts (pass `?archived=true` to include archived) |
+| `POST` | `/debts` | 🔒 | Create debt (`owe_me` or `i_owe`) |
+| `PATCH` | `/debts/:id` | 🔒 | Update debt fields |
+| `DELETE` | `/debts/:id` | 🔒 | Delete debt and its payment history |
+| `POST` | `/debts/:id/payments` | 🔒 | Record a payment (clamped to remaining balance) |
+| `POST` | `/debts/:id/archive` | 🔒 | Mark debt as archived and set paid = amount |
+
+### 📅 Budgets — `/budgets`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/budgets` | 🔒 | List all budgets |
+| `POST` | `/budgets` | 🔒 | Create per-category spending limit |
+| `PATCH` | `/budgets/:id` | 🔒 | Update spending limit |
+| `DELETE` | `/budgets/:id` | 🔒 | Delete budget |
+
+### 🔁 Recurring — `/recurring`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/recurring` | 🔒 | List recurring entries sorted by next due date |
+| `POST` | `/recurring` | 🔒 | Create recurring income/expense (weekly or monthly) |
+| `PATCH` | `/recurring/:id` | 🔒 | Update recurring entry |
+| `DELETE` | `/recurring/:id` | 🔒 | Delete recurring entry |
+
+### 🔔 Notifications — `/notifs`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/notifs` | 🔒 | List notifications, newest first (pagination: `?limit`, `?skip`) |
+| `POST` | `/notifs/:id/read` | 🔒 | Mark a single notification as read |
+| `POST` | `/notifs/read-all` | 🔒 | Mark all notifications as read |
+| `DELETE` | `/notifs/:id` | 🔒 | Delete a notification |
+
+> ⚠️ Notifications are **server-generated only** — clients cannot create them. Creation is restricted to prevent a compromised device from fabricating alerts.
+
+---
+
+## 🔐 Auth Deep-Dive
 
 ### Token revocation
 
-Each `User` carries a `passwordChangedAt` timestamp. The auth preHandler rejects any JWT whose `iat` is older than that timestamp, returning `401 token_revoked`. So a stolen token becomes useless the moment the legitimate owner resets their password. The check costs one indexed `findById` per authenticated request.
+Each `User` document stores a `passwordChangedAt` timestamp. The auth preHandler compares the JWT's `iat` against it — tokens older than the last credential change are rejected with `401 token_revoked`. Password reset, email change, and (where applicable) account deletion all bump this timestamp, immediately invalidating every prior session.
 
-### Avatar storage
-
-`PATCH /auth/me` accepts initials, an `https://` URL, or a `data:image/...` base64 URI capped at ~600 KB. Storing inline base64 hits Mongo's 16 MB document cap quickly and amplifies oplog writes — production deployments should move avatars to S3/CDN and store only the URL.
-
-## Project layout
+### Password reset flow
 
 ```
-src/
-├── app.ts              # Fastify factory + plugin & route registration
-├── index.ts            # Entrypoint — starts the server
-├── lib/
-│   ├── db-tx.ts        # withMaybeTransaction helper (replica-set fallback)
-│   ├── env.ts          # Env validation
-│   ├── mailer.ts       # SMTP wrapper (Gmail App Password)
-│   └── schemas.ts      # Shared OpenAPI / JSON Schema fragments
-├── plugins/
-│   ├── auth.ts         # @fastify/jwt + auth decorator (with passwordChangedAt revocation)
-│   ├── mongo.ts        # Mongoose connection
-│   └── swagger.ts      # OpenAPI / Swagger UI
-├── models/             # Mongoose schemas
-│   ├── User.ts
-│   ├── Wallet.ts
-│   ├── Category.ts
-│   ├── Transaction.ts
-│   ├── Debt.ts
-│   ├── Budget.ts
-│   ├── Recurring.ts
-│   ├── Notification.ts
-│   └── VerificationCode.ts
-└── routes/             # Route handlers (one file per prefix)
+POST /auth/password/forgot        →  emails 6-digit code
+POST /auth/password/verify-code   →  validates code, returns verifiedToken (2 min JWT)
+POST /auth/password/reset         →  verifiedToken + code + new password → fresh app JWT
 ```
 
-## Deployment notes
+The two-step verify/reset split prevents a raw code from being replayed directly into the reset endpoint without first passing through the verification step.
 
-- Build with `yarn build`, run with `yarn start` behind a reverse proxy (nginx). The production deployment terminates TLS at nginx and forwards to the Fastify process.
-- Set `NODE_ENV=production` to enable JSON logs, the strict CORS whitelist, and silenced validation detail in error responses.
-- Set `TRUST_PROXY=true` so Fastify reads `X-Forwarded-For` for per-IP rate limiting.
-- Add the production app's origin (and any web client) to `CORS_ORIGINS`.
-- Run MongoDB as a replica set so `/tx` writes are atomic. Even a single-node `rs0` is enough.
-- Mongo data should be backed up regularly; the schema relies on indexes defined in each model.
+### Google Sign-In safety
+
+Google sub IDs are never auto-linked onto an existing password account by email match — this would enable account takeover. Instead, `/auth/google` returns `409 account_link_required` when a collision is found, and the user must call `/auth/google/link` while authenticated with their password. Linking enforces that the Google token's email matches the account's email.
+
+---
+
+## 📜 Scripts
+
+| Command | Description |
+|---|---|
+| `yarn dev` | Hot-reload server with `tsx watch` and pino-pretty logs |
+| `yarn build` | Compile TypeScript to `dist/` via `tsc` |
+| `yarn start` | Run compiled output (`node dist/index.js`) |
+| `yarn typecheck` | Type-check without emitting (`tsc --noEmit`) |
+| `yarn test` | Run Vitest test suite |
+| `yarn test:watch` | Vitest in watch mode |
+| `yarn lint` | ESLint check |
+| `yarn lint:fix` | ESLint auto-fix |
+| `yarn format` | Prettier write |
+| `yarn format:check` | Prettier check |
+
+---
+
+## 📁 Project Structure
+
+```
+server/
+├── src/
+│   ├── app.ts                  # Fastify factory — plugins, routes, error handler
+│   ├── index.ts                # Entrypoint — binds and starts the server
+│   ├── lib/
+│   │   ├── db-tx.ts            # withMaybeTransaction — replica-set-aware session helper
+│   │   ├── defaultCategories.ts# Seeds a starter set of categories for new users
+│   │   ├── env.ts              # Validated environment config (required + guard checks)
+│   │   ├── mailer.ts           # Nodemailer SMTP wrapper for OTP emails
+│   │   ├── normalize.ts        # Email normalization (trim, lowercase)
+│   │   ├── schemas.ts          # Shared JSON Schema / OpenAPI building blocks
+│   │   └── security.ts         # safeCodeEqual (timing-safe compare), DUMMY_PASSWORD_HASH
+│   ├── models/
+│   │   ├── User.ts             # User with prefs, googleId, lockout fields
+│   │   ├── Wallet.ts           # Wallet with balance
+│   │   ├── Category.ts         # Bilingual income/expense category
+│   │   ├── Transaction.ts      # Income or expense entry
+│   │   ├── Debt.ts             # Debt with payments subdocument
+│   │   ├── Budget.ts           # Per-category spending limit
+│   │   ├── Recurring.ts        # Weekly/monthly recurring schedule
+│   │   ├── Notification.ts     # Server-generated notification
+│   │   └── VerificationCode.ts # OTP record (password reset, email change, account delete)
+│   ├── plugins/
+│   │   ├── auth.ts             # @fastify/jwt + app.auth preHandler decorator
+│   │   ├── mongo.ts            # Mongoose connection via fastify-plugin
+│   │   └── swagger.ts          # @fastify/swagger + swagger-ui (dev only)
+│   └── routes/
+│       ├── auth.ts             # /auth — register, login, google, me, password, email
+│       ├── transactions.ts     # /tx
+│       ├── wallets.ts          # /wallets
+│       ├── categories.ts       # /categories
+│       ├── debts.ts            # /debts
+│       ├── budgets.ts          # /budgets
+│       ├── recurring.ts        # /recurring
+│       └── notifications.ts    # /notifs
+├── package.json
+├── tsconfig.json
+└── .env.example
+```
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run the full suite
+yarn test
+
+# Run in watch mode during development
+yarn test:watch
+```
+
+Tests live alongside source files and are run with **Vitest**. They cover route smoke tests and JSON Schema validation. Type correctness is verified separately:
+
+```bash
+yarn typecheck   # tsc --noEmit — must pass before every commit
+```
+
+---
+
+## 🚢 Deployment Notes
+
+- Build with `yarn build`, serve with `yarn start` behind an nginx reverse proxy (TLS at nginx, plain HTTP to Fastify).
+- Set `NODE_ENV=production` — enables JSON (pino) logs, strict CORS from `CORS_ORIGINS`, HSTS headers, and strips validation detail from error responses.
+- Set `TRUST_PROXY=true` when nginx forwards `X-Forwarded-For`, so per-IP rate limits are accurate.
+- Run MongoDB as a **replica set** (`rs0`) so `/tx` writes are atomic. A single-node replica set is sufficient.
+- Back up MongoDB regularly — indexes are defined per model and must be present for correct uniqueness enforcement.
+- Swagger UI (`/docs`) is disabled in production automatically.
