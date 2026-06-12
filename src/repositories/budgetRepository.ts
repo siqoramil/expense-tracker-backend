@@ -17,7 +17,15 @@ export const budgetRepository = {
     return Budget.findOneAndUpdate({ _id: id, userId }, { $set: patch }, { new: true, lean: true });
   },
 
+  countByCat(catId: string, userId: string) {
+    return Budget.countDocuments({ cat: catId, userId });
+  },
+
   deleteForUser(id: string, userId: string) {
     return Budget.deleteOne({ _id: id, userId });
+  },
+
+  deleteByUser(userId: string, session?: import('mongoose').ClientSession | null) {
+    return Budget.deleteMany({ userId }, session ? { session } : {});
   },
 };

@@ -8,12 +8,18 @@ import {
   okResponse,
   recurringEntity,
 } from '../lib/schemas.js';
-import { Category } from '../models/Category.js';
-import { Recurring } from '../models/Recurring.js';
-import { Wallet } from '../models/Wallet.js';
+import { recurringService } from '../services/recurringService.js';
 
-// Per-user document cap (abuse / storage-exhaustion guard).
-const MAX_RECURRING = 200;
+type RecurringInput = {
+  kind: 'income' | 'expense';
+  cat: string;
+  wallet: string;
+  amount: number;
+  note?: string;
+  every?: 'month' | 'week';
+  nextDate: string;
+  enabled?: boolean;
+};
 
 const recurringBody = {
   type: 'object',
@@ -143,13 +149,10 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const items = await Recurring.find({ userId: req.user.sub }).sort({ nextDate: 1 }).limit(1000).lean();
-      return { items };
-    },
+    async (req) => ({ items: await recurringService.list(req.user.sub) }),
   );
 
-  app.post(
+  app.post<{ Body: RecurringInput }>(
     '/',
     {
       schema: {
@@ -168,23 +171,10 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      // Per-user cap: keep one account from creating unbounded documents.
-      const count = await Recurring.countDocuments({ userId: req.user.sub });
-      if (count >= MAX_RECURRING) return reply.code(409).send({ error: 'limit_reached' });
-      const body = req.body as { cat: string; wallet: string };
-      const [catOk, walletOk] = await Promise.all([
-        Category.exists({ _id: body.cat, userId: req.user.sub }),
-        Wallet.exists({ _id: body.wallet, userId: req.user.sub }),
-      ]);
-      if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
-      if (!walletOk) return reply.code(404).send({ error: 'wallet_not_found' });
-      const item = await Recurring.create({ ...(req.body as object), userId: req.user.sub });
-      return { item };
-    },
+    async (req) => ({ item: await recurringService.create(req.user.sub, req.body) }),
   );
 
-  app.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
+  app.patch<{ Params: { id: string }; Body: Partial<RecurringInput> }>(
     '/:id',
     {
       schema: {
@@ -203,26 +193,7 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const body = req.body as { cat?: string; wallet?: string };
-      if (body.cat !== undefined) {
-        const catOk = await Category.exists({ _id: body.cat, userId: req.user.sub });
-        if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
-      }
-      if (body.wallet !== undefined) {
-        const walletOk = await Wallet.exists({ _id: body.wallet, userId: req.user.sub });
-        if (!walletOk) return reply.code(404).send({ error: 'wallet_not_found' });
-      }
-      const item = await Recurring.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        // Wrap in $set so a body key like "$unset" can never be interpreted as
-        // a Mongo update operator (defence-in-depth alongside the strict schema).
-        { $set: req.body },
-        { new: true, lean: true },
-      );
-      if (!item) return reply.code(404).send({ error: 'not_found' });
-      return { item };
-    },
+    async (req) => ({ item: await recurringService.update(req.user.sub, req.params.id, req.body) }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -241,9 +212,8 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const res = await Recurring.deleteOne({ _id: req.params.id, userId: req.user.sub });
-      if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
+    async (req) => {
+      await recurringService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );
