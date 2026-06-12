@@ -120,7 +120,9 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const budget = await Budget.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
-        req.body,
+        // Wrap in $set so a body key like "$unset" can never be interpreted as
+        // a Mongo update operator (defence-in-depth alongside the strict schema).
+        { $set: req.body },
         { new: true, lean: true },
       );
       if (!budget) return reply.code(404).send({ error: 'not_found' });

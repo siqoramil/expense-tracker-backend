@@ -24,6 +24,12 @@ export const buildApp = async () => {
     // bodyLimit locally. Keeping the global cap low limits DoS amplification:
     // 200 req/min × 1 MB is bounded, vs 200 × 10 MB which was 2 GB/min/IP.
     bodyLimit: 1 * 1024 * 1024,
+    // Close slowloris-style holds: drop a connection that hasn't completed its
+    // request within these windows. Caddy fronts us, but defence-in-depth.
+    // connectionTimeout caps an idle/half-open socket; requestTimeout caps the
+    // time to receive a full request once bytes start arriving.
+    connectionTimeout: 10_000,
+    requestTimeout: 30_000,
     // When TRUST_PROXY=true, Fastify reads X-Forwarded-For so per-IP rate
     // limits don't lump every request behind the proxy onto one bucket.
     trustProxy: env.trustProxy,

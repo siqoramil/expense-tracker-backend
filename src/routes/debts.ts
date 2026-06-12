@@ -9,6 +9,13 @@ import {
 } from '../lib/schemas.js';
 import { Debt } from '../models/Debt.js';
 
+// Caps the embedded payments array per debt; far above any real use, but
+// bounds the document so it can't be grown toward Mongo's 16MB limit.
+const MAX_DEBT_PAYMENTS = 1000;
+
+// Per-user document cap (abuse / storage-exhaustion guard).
+const MAX_DEBTS = 1000;
+
 type DebtBody = {
   direction: 'owe_me' | 'i_owe';
   name: string;
@@ -38,6 +45,7 @@ const debtBody = {
     color: {
       type: 'string',
       maxLength: 40,
+      pattern: '^#[0-9a-fA-F]{3,8}$',
       description: 'Optional UI accent color for this debt card.',
       example: '#4ECDC4',
     },
@@ -182,11 +190,15 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
           200: itemResponse(debtEntity),
           400: errorResponseWith(['bad_request']),
           401: errorResponseWith(['unauthorized']),
+          409: errorResponseWith(['limit_reached']),
           500: errorResponseWith(['internal_error']),
         },
       },
     },
-    async (req) => {
+    async (req, reply) => {
+      // Per-user cap: keep one account from creating unbounded documents.
+      const count = await Debt.countDocuments({ userId: req.user.sub });
+      if (count >= MAX_DEBTS) return reply.code(409).send({ error: 'limit_reached' });
       const debt = await Debt.create({ ...req.body, userId: req.user.sub, paid: 0, payments: [] });
       return { item: debt };
     },
@@ -213,7 +225,9 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const debt = await Debt.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
-        req.body,
+        // Wrap in $set so a body key like "$unset" can never be interpreted as
+        // a Mongo update operator (defence-in-depth alongside the strict schema).
+        { $set: req.body },
         { new: true, lean: true },
       );
       if (!debt) return reply.code(404).send({ error: 'not_found' });
@@ -257,6 +271,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         response: {
           200: itemResponse(debtEntity),
           400: errorResponseWith(['bad_request', 'invalid_amount']),
+          409: errorResponseWith(['too_many_payments']),
           401: errorResponseWith(['unauthorized']),
           404: errorResponseWith(['not_found']),
           500: errorResponseWith(['internal_error']),
@@ -266,6 +281,11 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const debt = await Debt.findOne({ _id: req.params.id, userId: req.user.sub });
       if (!debt) return reply.code(404).send({ error: 'not_found' });
+      // Bound the embedded payments array so a single debt document can never
+      // be grown toward Mongo's 16MB cap by repeated payment writes.
+      if (debt.payments.length >= MAX_DEBT_PAYMENTS) {
+        return reply.code(409).send({ error: 'too_many_payments' });
+      }
       // Read-modify-write race on `paid` is bounded by single-user usage: a user
       // does not concurrently record payments for the same debt, so the clamp is safe.
       const amount = Math.min(req.body.amount, debt.amount - debt.paid);

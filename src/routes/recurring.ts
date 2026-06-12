@@ -12,6 +12,9 @@ import { Category } from '../models/Category.js';
 import { Recurring } from '../models/Recurring.js';
 import { Wallet } from '../models/Wallet.js';
 
+// Per-user document cap (abuse / storage-exhaustion guard).
+const MAX_RECURRING = 200;
+
 const recurringBody = {
   type: 'object',
   required: ['kind', 'cat', 'wallet', 'amount', 'nextDate'],
@@ -160,11 +163,15 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
           400: errorResponseWith(['bad_request']),
           401: errorResponseWith(['unauthorized']),
           404: errorResponseWith(['category_not_found', 'wallet_not_found']),
+          409: errorResponseWith(['limit_reached']),
           500: errorResponseWith(['internal_error']),
         },
       },
     },
     async (req, reply) => {
+      // Per-user cap: keep one account from creating unbounded documents.
+      const count = await Recurring.countDocuments({ userId: req.user.sub });
+      if (count >= MAX_RECURRING) return reply.code(409).send({ error: 'limit_reached' });
       const body = req.body as { cat: string; wallet: string };
       const [catOk, walletOk] = await Promise.all([
         Category.exists({ _id: body.cat, userId: req.user.sub }),
@@ -208,7 +215,9 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       }
       const item = await Recurring.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
-        req.body,
+        // Wrap in $set so a body key like "$unset" can never be interpreted as
+        // a Mongo update operator (defence-in-depth alongside the strict schema).
+        { $set: req.body },
         { new: true, lean: true },
       );
       if (!item) return reply.code(404).send({ error: 'not_found' });

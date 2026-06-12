@@ -14,6 +14,9 @@ import { Wallet } from '../models/Wallet.js';
 // deliberately omits it: ongoing balance changes must flow through /tx so
 // the wallet balance always reconciles with the sum of its transactions.
 // Allowing PATCH to set balance directly let clients drift the two apart.
+// Per-user document cap (abuse / storage-exhaustion guard).
+const MAX_WALLETS = 100;
+
 const walletCreateShape = {
   type: 'object',
   properties: {
@@ -128,11 +131,15 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
           200: itemResponse(walletEntity),
           400: errorResponseWith(['bad_request']),
           401: errorResponseWith(['unauthorized']),
+          409: errorResponseWith(['limit_reached']),
           500: errorResponseWith(['internal_error']),
         },
       },
     },
-    async (req) => {
+    async (req, reply) => {
+      // Per-user cap: keep one account from creating unbounded documents.
+      const count = await Wallet.countDocuments({ userId: req.user.sub });
+      if (count >= MAX_WALLETS) return reply.code(409).send({ error: 'limit_reached' });
       const wallet = await Wallet.create({ ...req.body, userId: req.user.sub });
       return { item: wallet };
     },
@@ -160,7 +167,9 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const wallet = await Wallet.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
-        req.body,
+        // Wrap in $set so a body key like "$unset" can never be interpreted as
+        // a Mongo update operator (defence-in-depth alongside the strict schema).
+        { $set: req.body },
         { new: true, lean: true },
       );
       if (!wallet) return reply.code(404).send({ error: 'not_found' });

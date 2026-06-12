@@ -51,6 +51,29 @@ const isDuplicateKeyError = (err: unknown): boolean => {
 const CODE_TTL_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
+// Minimum gap between successive verification-code emails for the same account
+// + purpose. Stops mail-bombing: spamming /password/forgot or
+// /email/request-change can't fire more than one email per minute per account.
+const CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+
+// Returns true when an unconsumed, unexpired code for this user + purpose was
+// issued within the cooldown window (i.e. a fresh email was just sent).
+const codeOnCooldown = async (
+  userId: unknown,
+  purpose: 'password_reset' | 'email_change' | 'account_delete',
+): Promise<boolean> => {
+  const recent = await VerificationCode.findOne({
+    userId,
+    purpose,
+    consumed: false,
+    expiresAt: { $gt: new Date() },
+    createdAt: { $gt: new Date(Date.now() - CODE_RESEND_COOLDOWN_MS) },
+  })
+    .select({ _id: 1 })
+    .lean();
+  return Boolean(recent);
+};
+
 // At least 8 chars, must contain a letter and a digit.
 const PASSWORD_PATTERN = '^(?=.*[A-Za-z])(?=.*\\d).{8,128}$';
 
@@ -553,7 +576,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           200: codeSentResponse,
           401: errorResponseWith(['unauthorized']),
           404: errorResponseWith(['not_found']),
-          429: errorResponseWith(['rate_limit_exceeded']),
+          429: errorResponseWith(['code_recently_sent', 'rate_limit_exceeded']),
           500: errorResponseWith(['internal_error']),
           503: errorResponseWith(['mail_send_failed']),
         },
@@ -562,6 +585,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
+
+      // Cooldown: refuse to re-send if a code was issued in the last minute.
+      if (await codeOnCooldown(user._id, 'account_delete')) {
+        return reply.code(429).send({ error: 'code_recently_sent' });
+      }
 
       await VerificationCode.deleteMany({
         userId: user._id,
@@ -749,7 +777,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           400: errorResponseWith(['bad_request', 'same_email']),
           401: errorResponseWith(['unauthorized']),
           404: errorResponseWith(['not_found']),
-          429: errorResponseWith(['rate_limit_exceeded']),
+          429: errorResponseWith(['code_recently_sent', 'rate_limit_exceeded']),
           500: errorResponseWith(['internal_error']),
           503: errorResponseWith(['mail_send_failed']),
         },
@@ -760,6 +788,13 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       const user = await User.findById(req.user.sub);
       if (!user) return reply.code(404).send({ error: 'not_found' });
       if (user.email === newEmail) return reply.code(400).send({ error: 'same_email' });
+
+      // Cooldown: refuse to re-send if a code was issued in the last minute.
+      // Checked before the taken-email branch so the response timing/shape is
+      // the same whether or not the target address is registered.
+      if (await codeOnCooldown(user._id, 'email_change')) {
+        return reply.code(429).send({ error: 'code_recently_sent' });
+      }
 
       // Treat already-registered targets as a silent no-op: do NOT send a
       // code and do NOT create a VerificationCode record. Returning the
@@ -958,6 +993,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     async (req) => {
       const email = normalizeEmail(req.body.email);
       const user = await User.findOne({ email });
+      // Cooldown: if a reset code was issued for this account in the last
+      // minute, do NOT send another (anti mail-bombing). The response stays
+      // { sent: true } either way, so this never leaks account existence.
+      if (user && (await codeOnCooldown(user._id, 'password_reset'))) {
+        return { sent: true, expiresInSeconds: CODE_TTL_MS / 1000 };
+      }
       if (user) {
         await VerificationCode.deleteMany({
           userId: user._id,

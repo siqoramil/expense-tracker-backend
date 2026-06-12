@@ -10,6 +10,9 @@ import {
 } from '../lib/schemas.js';
 import { Category } from '../models/Category.js';
 
+// Per-user document cap (abuse / storage-exhaustion guard).
+const MAX_CATEGORIES = 300;
+
 const labelSchema = {
   type: 'object',
   required: ['en', 'uz'],
@@ -27,15 +30,15 @@ const categoryBody = {
     label: labelSchema,
     icon: {
       type: 'string',
-      minLength: 1,
       maxLength: 40,
+      pattern: '^[a-z0-9_-]{1,40}$',
       description: 'Icon identifier slug used by the mobile app.',
       example: 'food',
     },
     color: {
       type: 'string',
-      minLength: 1,
       maxLength: 40,
+      pattern: '^#[0-9a-fA-F]{3,8}$',
       description: 'Hex color string for the category chip.',
       example: '#FF6B6B',
     },
@@ -129,11 +132,15 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
           200: itemResponse(categoryEntity),
           400: errorResponseWith(['bad_request']),
           401: errorResponseWith(['unauthorized']),
+          409: errorResponseWith(['limit_reached']),
           500: errorResponseWith(['internal_error']),
         },
       },
     },
-    async (req) => {
+    async (req, reply) => {
+      // Per-user cap: keep one account from creating unbounded documents.
+      const count = await Category.countDocuments({ userId: req.user.sub });
+      if (count >= MAX_CATEGORIES) return reply.code(409).send({ error: 'limit_reached' });
       const cat = await Category.create({ ...req.body, userId: req.user.sub });
       return { item: cat };
     },
@@ -160,7 +167,9 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
     async (req, reply) => {
       const cat = await Category.findOneAndUpdate(
         { _id: req.params.id, userId: req.user.sub },
-        req.body,
+        // Wrap in $set so a body key like "$unset" can never be interpreted as
+        // a Mongo update operator (defence-in-depth alongside the strict schema).
+        { $set: req.body },
         { new: true, lean: true },
       );
       if (!cat) return reply.code(404).send({ error: 'not_found' });
