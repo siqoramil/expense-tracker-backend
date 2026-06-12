@@ -7,17 +7,12 @@ import {
   okResponse,
   walletEntity,
 } from '../lib/schemas.js';
-import { seedDefaultWallets } from '../lib/defaultWallets.js';
-import { Transaction } from '../models/Transaction.js';
-import { Wallet } from '../models/Wallet.js';
+import { walletService } from '../services/walletService.js';
 
 // POST accepts an initial `balance` to seed a wallet on creation. PATCH
 // deliberately omits it: ongoing balance changes must flow through /tx so
 // the wallet balance always reconciles with the sum of its transactions.
 // Allowing PATCH to set balance directly let clients drift the two apart.
-// Per-user document cap (abuse / storage-exhaustion guard).
-const MAX_WALLETS = 100;
-
 const walletCreateShape = {
   type: 'object',
   properties: {
@@ -83,18 +78,8 @@ const walletPatchShape = {
   additionalProperties: false,
 } as const;
 
-type WalletCreateBody = {
-  name?: { en: string; uz: string };
-  icon?: string;
-  color?: string;
-  balance?: number;
-};
-
-type WalletPatchBody = {
-  name?: { en: string; uz: string };
-  icon?: string;
-  color?: string;
-};
+type WalletCreateBody = { name: { en: string; uz: string }; icon: string; color: string; balance?: number };
+type WalletPatchBody = { name?: { en: string; uz: string }; icon?: string; color?: string };
 
 const walletsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
@@ -113,17 +98,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const count = await Wallet.countDocuments({ userId: req.user.sub });
-      if (count === 0) {
-        // Backfill existing accounts created before server-side wallet seeding.
-        // ordered:false tolerates a concurrent seed (per-doc duplicate errors
-        // are swallowed). Best-effort: a seed failure must not block the list.
-        await seedDefaultWallets(req.user.sub).catch(() => {});
-      }
-      const items = await Wallet.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
-      return { items };
-    },
+    async (req) => ({ items: await walletService.list(req.user.sub) }),
   );
 
   app.post<{ Body: WalletCreateBody }>(
@@ -144,13 +119,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      // Per-user cap: keep one account from creating unbounded documents.
-      const count = await Wallet.countDocuments({ userId: req.user.sub });
-      if (count >= MAX_WALLETS) return reply.code(409).send({ error: 'limit_reached' });
-      const wallet = await Wallet.create({ ...req.body, userId: req.user.sub });
-      return { item: wallet };
-    },
+    async (req) => ({ item: await walletService.create(req.user.sub, req.body) }),
   );
 
   app.patch<{ Params: { id: string }; Body: WalletPatchBody }>(
@@ -172,17 +141,7 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const wallet = await Wallet.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        // Wrap in $set so a body key like "$unset" can never be interpreted as
-        // a Mongo update operator (defence-in-depth alongside the strict schema).
-        { $set: req.body },
-        { new: true, lean: true },
-      );
-      if (!wallet) return reply.code(404).send({ error: 'not_found' });
-      return { item: wallet };
-    },
+    async (req) => ({ item: await walletService.update(req.user.sub, req.params.id, req.body) }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -203,14 +162,8 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const txCount = await Transaction.countDocuments({
-        wallet: req.params.id,
-        userId: req.user.sub,
-      });
-      if (txCount > 0) return reply.code(409).send({ error: 'wallet_not_empty' });
-      const res = await Wallet.deleteOne({ _id: req.params.id, userId: req.user.sub });
-      if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
+    async (req) => {
+      await walletService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );

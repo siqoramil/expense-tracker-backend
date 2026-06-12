@@ -1,6 +1,4 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { Types } from 'mongoose';
-import { withMaybeTransaction } from '../lib/db-tx.js';
 import {
   errorResponseWith,
   itemResponse,
@@ -9,9 +7,7 @@ import {
   okResponse,
   transactionEntity,
 } from '../lib/schemas.js';
-import { Category } from '../models/Category.js';
-import { Transaction } from '../models/Transaction.js';
-import { Wallet } from '../models/Wallet.js';
+import { transactionService } from '../services/transactionService.js';
 
 type TxBody = {
   kind: 'income' | 'expense';
@@ -25,19 +21,6 @@ type TxBody = {
 const MONTH_RX = /^[0-9]{4}-(0[1-9]|1[0-2])$/;
 const DATE_RX = /^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
 
-const monthRange = (month: string): { gte: string; lt: string } => {
-  const [y, m] = month.split('-').map(Number);
-  const nextY = m === 12 ? y + 1 : y;
-  const nextM = m === 12 ? 1 : m + 1;
-  return {
-    gte: `${y}-${String(m).padStart(2, '0')}-01`,
-    lt: `${nextY}-${String(nextM).padStart(2, '0')}-01`,
-  };
-};
-
-const delta = (kind: 'income' | 'expense', amount: number) =>
-  kind === 'income' ? amount : -amount;
-
 const txBodySchema = {
   type: 'object',
   properties: {
@@ -47,10 +30,6 @@ const txBodySchema = {
       description: 'Whether this transaction is income or expense.',
       example: 'expense',
     },
-    // cat is an ObjectId on the model (Schema.Types.ObjectId). Accepting
-    // a free-form string here let arbitrary input slip through to
-    // Mongoose, which then threw CastError -> 500. Match the model so
-    // bad input is rejected at the edge with 400.
     cat: {
       type: 'string',
       pattern: OBJECT_ID_PATTERN,
@@ -95,6 +74,19 @@ const statsResponse = {
     net: { type: 'number', description: 'income minus expense.', example: 1799.5 },
     count: { type: 'integer', description: 'Total number of transactions in the month.', example: 14 },
   },
+} as const;
+
+const idParam = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: '24-hex ObjectId of the transaction.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c6',
+    },
+  },
+  required: ['id'],
 } as const;
 
 const transactionsRoutes: FastifyPluginAsync = async (app) => {
@@ -142,19 +134,13 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const filter: Record<string, unknown> = { userId: req.user.sub };
-      if (req.query.month) {
-        const { gte, lt } = monthRange(req.query.month);
-        filter.date = { $gte: gte, $lt: lt };
-      }
-      if (req.query.kind) filter.kind = req.query.kind;
-      const items = await Transaction.find(filter)
-        .sort({ date: -1, createdAt: -1 })
-        .limit(req.query.limit ?? 1000)
-        .lean();
-      return { items };
-    },
+    async (req) => ({
+      items: await transactionService.list(req.user.sub, {
+        month: req.query.month,
+        kind: req.query.kind,
+        limit: req.query.limit ?? 1000,
+      }),
+    }),
   );
 
   app.post<{ Body: TxBody }>(
@@ -165,10 +151,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         summary: 'Create transaction',
         description:
           'Creates a transaction and atomically adjusts the wallet balance (income adds to balance, expense subtracts). Both the category and wallet must be owned by the authenticated user.',
-        body: {
-          ...txBodySchema,
-          required: ['kind', 'cat', 'wallet', 'amount', 'date'],
-        },
+        body: { ...txBodySchema, required: ['kind', 'cat', 'wallet', 'amount', 'date'] },
         response: {
           200: itemResponse(transactionEntity),
           400: errorResponseWith(['bad_request']),
@@ -178,23 +161,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const tx = await withMaybeTransaction(async (session) => {
-        const catOk = await Category.exists({ _id: req.body.cat, userId: req.user.sub });
-        if (!catOk) throw reply.code(404).send({ error: 'category_not_found' });
-        const res = await Wallet.updateOne(
-          { _id: req.body.wallet, userId: req.user.sub },
-          { $inc: { balance: delta(req.body.kind, req.body.amount) } },
-          { session: session ?? undefined },
-        );
-        if (res.matchedCount === 0) throw reply.code(404).send({ error: 'wallet_not_found' });
-        const [created] = await Transaction.create([{ ...req.body, userId: req.user.sub }], {
-          session: session ?? undefined,
-        });
-        return created;
-      });
-      return { item: tx };
-    },
+    async (req) => ({ item: await transactionService.create(req.user.sub, req.body) }),
   );
 
   app.patch<{ Params: { id: string }; Body: Partial<TxBody> }>(
@@ -205,18 +172,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         summary: 'Update transaction',
         description:
           'Updates a transaction and atomically reverses the previous wallet balance effect before applying the new one. Any changed category or wallet must be owned by the user.',
-        params: {
-          type: 'object',
-          properties: {
-            id: {
-              type: 'string',
-              pattern: OBJECT_ID_PATTERN,
-              description: '24-hex ObjectId of the transaction to update.',
-              example: '64a1f2e3b4c5d6e7f8a9b0c6',
-            },
-          },
-          required: ['id'],
-        },
+        params: idParam,
         body: txBodySchema,
         response: {
           200: itemResponse(transactionEntity),
@@ -227,47 +183,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const updated = await withMaybeTransaction(async (session) => {
-        const old = await Transaction.findOne({ _id: req.params.id, userId: req.user.sub }, null, {
-          session,
-        });
-        if (!old) throw reply.code(404).send({ error: 'not_found' });
-
-        const next = { ...old.toObject(), ...req.body };
-
-        // Run the category and wallet ownership checks in parallel -- both are
-        // reads and are independent of each other.
-        const [catOk, newWalletOk] = await Promise.all([
-          req.body.cat
-            ? Category.exists({ _id: req.body.cat, userId: req.user.sub })
-            : Promise.resolve(true as unknown as { _id: unknown } | null),
-          Wallet.findOne({ _id: next.wallet, userId: req.user.sub }, { _id: 1 }, { session }),
-        ]);
-        if (req.body.cat && !catOk) throw reply.code(404).send({ error: 'category_not_found' });
-        // The target wallet must be owned before any balance is mutated, so a
-        // failure here leaves no half-applied $inc behind.
-        if (!newWalletOk) throw reply.code(404).send({ error: 'wallet_not_found' });
-
-        // Reverse old wallet effect (may be missing if the wallet was deleted).
-        await Wallet.updateOne(
-          { _id: old.wallet, userId: req.user.sub },
-          { $inc: { balance: -delta(old.kind, old.amount) } },
-          { session: session ?? undefined },
-        );
-        // Apply new wallet effect.
-        await Wallet.updateOne(
-          { _id: next.wallet, userId: req.user.sub },
-          { $inc: { balance: delta(next.kind, next.amount) } },
-          { session: session ?? undefined },
-        );
-
-        Object.assign(old, req.body);
-        await old.save({ session: session ?? undefined });
-        return old;
-      });
-      return { item: updated };
-    },
+    async (req) => ({ item: await transactionService.update(req.user.sub, req.params.id, req.body) }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -276,20 +192,8 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Transactions'],
         summary: 'Delete transaction',
-        description:
-          'Deletes a transaction and atomically reverses its effect on the wallet balance.',
-        params: {
-          type: 'object',
-          properties: {
-            id: {
-              type: 'string',
-              pattern: OBJECT_ID_PATTERN,
-              description: '24-hex ObjectId of the transaction to delete.',
-              example: '64a1f2e3b4c5d6e7f8a9b0c6',
-            },
-          },
-          required: ['id'],
-        },
+        description: 'Deletes a transaction and atomically reverses its effect on the wallet balance.',
+        params: idParam,
         response: {
           200: okResponse,
           401: errorResponseWith(['unauthorized']),
@@ -298,19 +202,8 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      await withMaybeTransaction(async (session) => {
-        const tx = await Transaction.findOne({ _id: req.params.id, userId: req.user.sub }, null, {
-          session,
-        });
-        if (!tx) throw reply.code(404).send({ error: 'not_found' });
-        await Wallet.updateOne(
-          { _id: tx.wallet, userId: req.user.sub },
-          { $inc: { balance: -delta(tx.kind, tx.amount) } },
-          { session: session ?? undefined },
-        );
-        await tx.deleteOne({ session: session ?? undefined });
-      });
+    async (req) => {
+      await transactionService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );
@@ -343,27 +236,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const { gte, lt } = monthRange(req.params.month);
-      const grouped = await Transaction.aggregate<{
-        _id: 'income' | 'expense';
-        sum: number;
-        count: number;
-      }>([
-        { $match: { userId: new Types.ObjectId(req.user.sub), date: { $gte: gte, $lt: lt } } },
-        { $project: { _id: 0, kind: 1, amount: 1 } },
-        { $group: { _id: '$kind', sum: { $sum: '$amount' }, count: { $sum: 1 } } },
-      ]);
-      let income = 0;
-      let expense = 0;
-      let count = 0;
-      for (const row of grouped) {
-        count += row.count;
-        if (row._id === 'income') income = row.sum;
-        else if (row._id === 'expense') expense = row.sum;
-      }
-      return { income, expense, net: income - expense, count };
-    },
+    async (req) => transactionService.statsForMonth(req.user.sub, req.params.month),
   );
 };
 
