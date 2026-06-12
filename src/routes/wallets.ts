@@ -7,6 +7,7 @@ import {
   okResponse,
   walletEntity,
 } from '../lib/schemas.js';
+import { seedDefaultWallets } from '../lib/defaultWallets.js';
 import { Transaction } from '../models/Transaction.js';
 import { Wallet } from '../models/Wallet.js';
 
@@ -113,6 +114,13 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
+      const count = await Wallet.countDocuments({ userId: req.user.sub });
+      if (count === 0) {
+        // Backfill existing accounts created before server-side wallet seeding.
+        // ordered:false tolerates a concurrent seed (per-doc duplicate errors
+        // are swallowed). Best-effort: a seed failure must not block the list.
+        await seedDefaultWallets(req.user.sub).catch(() => {});
+      }
       const items = await Wallet.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
       return { items };
     },

@@ -13,6 +13,7 @@ import {
 } from '../lib/schemas.js';
 import { DUMMY_PASSWORD_HASH, safeCodeEqual } from '../lib/security.js';
 import { seedDefaultCategories } from '../lib/defaultCategories.js';
+import { seedDefaultWallets } from '../lib/defaultWallets.js';
 import { Budget } from '../models/Budget.js';
 import { Category } from '../models/Category.js';
 import { Debt } from '../models/Debt.js';
@@ -192,6 +193,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         seedDefaultCategories(user._id).catch((err) =>
           app.log.error({ err }, 'seedDefaultCategories failed on register'),
         );
+        seedDefaultWallets(user._id).catch((err) =>
+          app.log.error({ err }, 'seedDefaultWallets failed on register'),
+        );
         return { token, user: toUserDTO(user) };
       } catch (err) {
         if (isDuplicateKeyError(err)) {
@@ -360,6 +364,9 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         }
         seedDefaultCategories(user._id).catch((err) =>
           app.log.error({ err }, 'seedDefaultCategories failed on google register'),
+        );
+        seedDefaultWallets(user._id).catch((err) =>
+          app.log.error({ err }, 'seedDefaultWallets failed on google register'),
         );
       } else if (!user.avatar && picture) {
         user.avatar = picture;
