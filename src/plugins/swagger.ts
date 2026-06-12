@@ -1,7 +1,36 @@
+import { timingSafeEqual } from 'node:crypto';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { env } from '../lib/env.js';
+
+// HTTP Basic Auth gate for the /docs surface (Swagger UI + the OpenAPI JSON).
+// Compared in constant time so the password can't be recovered byte-by-byte
+// via response-timing. Fails closed: if SWAGGER_USER/SWAGGER_PASS aren't both
+// set, every /docs request is rejected.
+const SWAGGER_REALM = 'ExTracker API docs';
+
+const buildExpectedHeader = (): string | null => {
+  if (!env.swagger.user || !env.swagger.pass) return null;
+  return 'Basic ' + Buffer.from(`${env.swagger.user}:${env.swagger.pass}`).toString('base64');
+};
+
+const docsAuthHook =
+  (expected: string | null) => async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!req.url.startsWith('/docs')) return;
+    reply.header('WWW-Authenticate', `Basic realm="${SWAGGER_REALM}", charset="UTF-8"`);
+    if (!expected) {
+      return reply.code(401).send({ error: 'docs_auth_not_configured' });
+    }
+    const provided = req.headers.authorization ?? '';
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    const ok = a.length === b.length && timingSafeEqual(a, b);
+    if (!ok) {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+  };
 
 const tagFromUrl = (url: string): string => {
   const seg = url.split('?')[0].split('/').filter(Boolean)[0];
@@ -43,6 +72,11 @@ const isPublic = (method: string, url: string): boolean =>
   PUBLIC_ROUTES[method.toUpperCase()]?.has(url) ?? false;
 
 const swaggerPlugin = async (app: FastifyInstance) => {
+  // Gate every /docs request behind HTTP Basic Auth before swagger-ui serves
+  // anything. Registered as a global onRequest hook but short-circuits for
+  // non-/docs URLs, so it adds no overhead to the API itself.
+  app.addHook('onRequest', docsAuthHook(buildExpectedHeader()));
+
   await app.register(swagger, {
     openapi: {
       info: {

@@ -9,6 +9,8 @@ process.env.GOOGLE_IOS_CLIENT_ID = '';
 process.env.GOOGLE_ANDROID_CLIENT_ID = '';
 process.env.SMTP_USER = '';
 process.env.SMTP_PASS = '';
+process.env.SWAGGER_USER = 'docs';
+process.env.SWAGGER_PASS = 'docs-test-pass';
 
 // Avoid actually opening a Mongo connection during tests. Models can still
 // be defined; smoke tests don't reach the DB because they're either

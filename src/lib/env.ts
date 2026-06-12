@@ -71,7 +71,14 @@ export const env = {
   // X-Forwarded-For. Off by default: trusting the header without a proxy
   // would let any client spoof their source IP.
   trustProxy: process.env.TRUST_PROXY === 'true',
-  enableSwagger: process.env.ENABLE_SWAGGER !== 'false' ,
+  enableSwagger: process.env.ENABLE_SWAGGER !== 'false',
+  // HTTP Basic Auth credentials gating the /docs Swagger UI. When either is
+  // empty the docs are locked down (no one can open them) so an unconfigured
+  // deploy never exposes the full API surface as an attacker recon aid.
+  swagger: {
+    user: process.env.SWAGGER_USER ?? '',
+    pass: process.env.SWAGGER_PASS ?? '',
+  },
   google: {
     webClientId: process.env.GOOGLE_WEB_CLIENT_ID ?? '',
     iosClientId: process.env.GOOGLE_IOS_CLIENT_ID ?? '',

@@ -22,8 +22,27 @@ describe('system', () => {
     expect(typeof body.ts).toBe('number');
   });
 
-  it('GET /docs/static/index.html serves swagger ui assets', async () => {
+  it('GET /docs/json without Basic Auth is rejected', async () => {
     const res = await app.inject({ method: 'GET', url: '/docs/json' });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['www-authenticate']).toMatch(/^Basic /);
+  });
+
+  it('GET /docs/json with wrong Basic Auth is rejected', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/docs/json',
+      headers: { authorization: 'Basic ' + Buffer.from('docs:wrong').toString('base64') },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('GET /docs/json with correct Basic Auth serves the OpenAPI spec', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/docs/json',
+      headers: { authorization: 'Basic ' + Buffer.from('docs:docs-test-pass').toString('base64') },
+    });
     expect(res.statusCode).toBe(200);
     const spec = res.json() as { openapi: string; paths: Record<string, unknown> };
     expect(spec.openapi).toMatch(/^3\./);
