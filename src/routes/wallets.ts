@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
-  errorResponse,
+  errorResponseWith,
   idParams,
   itemResponse,
   itemsResponse,
@@ -20,14 +20,32 @@ const walletCreateShape = {
     name: {
       type: 'object',
       properties: {
-        en: { type: 'string', maxLength: 80 },
-        uz: { type: 'string', maxLength: 80 },
+        en: { type: 'string', maxLength: 80, description: 'Wallet name in English.', example: 'Cash' },
+        uz: { type: 'string', maxLength: 80, description: 'Wallet name in Uzbek.', example: 'Naqd pul' },
       },
       additionalProperties: false,
     },
-    icon: { type: 'string', maxLength: 40, pattern: '^[a-z0-9_-]{1,40}$' },
-    color: { type: 'string', maxLength: 40, pattern: '^#[0-9a-fA-F]{3,8}$' },
-    balance: { type: 'number', minimum: -1e12, maximum: 1e12 },
+    icon: {
+      type: 'string',
+      maxLength: 40,
+      pattern: '^[a-z0-9_-]{1,40}$',
+      description: 'Icon slug (lowercase alphanumeric, hyphens, underscores).',
+      example: 'wallet',
+    },
+    color: {
+      type: 'string',
+      maxLength: 40,
+      pattern: '^#[0-9a-fA-F]{3,8}$',
+      description: 'Hex color string including the leading #.',
+      example: '#2ECC71',
+    },
+    balance: {
+      type: 'number',
+      minimum: -1e12,
+      maximum: 1e12,
+      description: 'Initial balance to seed the wallet. After creation balance is managed via /tx.',
+      example: 500,
+    },
   },
   additionalProperties: false,
 } as const;
@@ -38,13 +56,25 @@ const walletPatchShape = {
     name: {
       type: 'object',
       properties: {
-        en: { type: 'string', maxLength: 80 },
-        uz: { type: 'string', maxLength: 80 },
+        en: { type: 'string', maxLength: 80, description: 'Wallet name in English.', example: 'Cash' },
+        uz: { type: 'string', maxLength: 80, description: 'Wallet name in Uzbek.', example: 'Naqd pul' },
       },
       additionalProperties: false,
     },
-    icon: { type: 'string', maxLength: 40, pattern: '^[a-z0-9_-]{1,40}$' },
-    color: { type: 'string', maxLength: 40, pattern: '^#[0-9a-fA-F]{3,8}$' },
+    icon: {
+      type: 'string',
+      maxLength: 40,
+      pattern: '^[a-z0-9_-]{1,40}$',
+      description: 'Icon slug.',
+      example: 'wallet',
+    },
+    color: {
+      type: 'string',
+      maxLength: 40,
+      pattern: '^#[0-9a-fA-F]{3,8}$',
+      description: 'Hex color string.',
+      example: '#2ECC71',
+    },
   },
   additionalProperties: false,
 } as const;
@@ -69,11 +99,13 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Wallets'],
         summary: 'List wallets',
-        description: 'Returns every wallet owned by the authenticated user, in creation order.',
+        description: 'Returns every wallet owned by the authenticated user, sorted by creation time (oldest first).',
         response: {
           200: itemsResponse(walletEntity),
-          401: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -87,14 +119,16 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Wallets'],
         summary: 'Create wallet',
         description:
-          'Creates a new wallet (cash, card, etc.) with bilingual name, icon, and color. An initial balance may be seeded here; subsequent changes must go through /tx.',
+          'Creates a new wallet (cash, card, crypto, etc.) with bilingual name, icon slug, and hex color. An initial balance may be seeded here; all subsequent balance changes must go through POST /tx.',
         body: { ...walletCreateShape, required: ['name', 'icon', 'color'] },
         response: {
           200: itemResponse(walletEntity),
-          400: errorResponse,
-          401: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -108,15 +142,18 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Wallets'],
         summary: 'Update wallet',
         description:
-          'Patches the name, icon, or color on an existing wallet. The balance is intentionally not accepted here — it is derived from /tx writes and must stay in sync.',
+          'Patches the name, icon, or color on an existing wallet. The balance field is intentionally absent -- it is derived from transaction writes via /tx and must stay in sync.',
         params: idParams,
         body: walletPatchShape,
         response: {
           200: itemResponse(walletEntity),
-          401: errorResponse,
-          404: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -135,15 +172,17 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Wallets'],
         summary: 'Delete wallet',
         description:
-          'Permanently deletes a wallet. Deletion is blocked while any transaction still references the wallet, to avoid orphaned transactions.',
+          'Permanently deletes a wallet. Deletion is blocked while any transaction still references the wallet (409 wallet_not_empty), to prevent orphaned transactions.',
         params: idParams,
         response: {
           200: okResponse,
-          401: errorResponse,
-          404: errorResponse,
-          409: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found']),
+          409: errorResponseWith(['wallet_not_empty']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },

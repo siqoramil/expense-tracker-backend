@@ -1,6 +1,7 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import type { default as Ajv } from 'ajv';
 import Fastify from 'fastify';
 import { env } from './lib/env.js';
 import authPlugin from './plugins/auth.js';
@@ -29,7 +30,14 @@ export const buildApp = async () => {
     // Fastify v5 defaults to removeAdditional: 'all', which silently strips
     // unknown body fields. That hides client typos and turns schema diffs into
     // soft failures instead of 400s. We want strict validation everywhere.
-    ajv: { customOptions: { removeAdditional: false } },
+    //
+    // `example` is an OpenAPI annotation keyword (used throughout the route
+    // schemas for Swagger docs); register it as a no-op so AJV's strict mode
+    // doesn't reject schemas that carry it.
+    ajv: {
+      customOptions: { removeAdditional: false },
+      plugins: [(ajv: Ajv) => ajv.addKeyword('example')],
+    },
     logger: {
       level: isProd ? 'info' : 'debug',
       transport: isProd

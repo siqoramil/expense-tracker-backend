@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
-  errorResponse,
+  errorResponseWith,
   idParams,
   itemResponse,
   itemsResponse,
@@ -16,20 +16,36 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Notifications'],
         summary: 'List notifications',
         description:
-          'Returns notifications for the authenticated user, newest first. Supports limit/skip pagination (default limit: 100).',
+          'Returns notifications for the authenticated user, newest first. Supports limit/skip pagination. Default limit is 100, default skip is 0. Notifications are server-generated events (overdue debts, budget breaches, scheduled bills, recurring income) -- clients cannot create them directly.',
         querystring: {
           type: 'object',
           properties: {
-            limit: { type: 'integer', minimum: 1, maximum: 500, default: 100 },
-            skip: { type: 'integer', minimum: 0, default: 0 },
+            limit: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 500,
+              default: 100,
+              description: 'Maximum number of notifications to return. Default: 100.',
+              example: 20,
+            },
+            skip: {
+              type: 'integer',
+              minimum: 0,
+              default: 0,
+              description: 'Number of notifications to skip (offset-based pagination). Default: 0.',
+              example: 0,
+            },
           },
           additionalProperties: false,
         },
         response: {
           200: itemsResponse(notificationEntity),
-          401: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -55,13 +71,15 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     '/:id/read',
     {
       schema: {
+        tags: ['Notifications'],
         summary: 'Mark notification as read',
-        description: 'Marks a single notification as read.',
+        description: 'Sets read=true on a single notification owned by the user. Idempotent: calling it again on an already-read notification still returns 200.',
         params: idParams,
         response: {
           200: itemResponse(notificationEntity),
-          401: errorResponse,
-          404: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -80,11 +98,13 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     '/read-all',
     {
       schema: {
+        tags: ['Notifications'],
         summary: 'Mark all notifications as read',
-        description: 'Marks every unread notification belonging to the user as read.',
+        description: 'Marks every unread notification belonging to the user as read in a single bulk write. Returns ok=true even when there were no unread notifications.',
         response: {
           200: okResponse,
-          401: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -98,13 +118,15 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Notifications'],
         summary: 'Delete notification',
-        description: 'Permanently deletes a notification.',
+        description: 'Permanently deletes a single notification owned by the user.',
         params: idParams,
         response: {
           200: okResponse,
-          401: errorResponse,
-          404: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },

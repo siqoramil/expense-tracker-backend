@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
-  errorResponse,
+  errorResponseWith,
   idParams,
   itemResponse,
   itemsResponse,
@@ -16,14 +16,54 @@ const recurringBody = {
   type: 'object',
   required: ['kind', 'cat', 'wallet', 'amount', 'nextDate'],
   properties: {
-    kind: { type: 'string', enum: ['income', 'expense'] },
-    cat: { type: 'string', pattern: OBJECT_ID_PATTERN },
-    wallet: { type: 'string', pattern: OBJECT_ID_PATTERN },
-    amount: { type: 'number', minimum: 0, maximum: 1e12 },
-    note: { type: 'string', maxLength: 500 },
-    every: { type: 'string', enum: ['month', 'week'] },
-    nextDate: { type: 'string', maxLength: 32 },
-    enabled: { type: 'boolean' },
+    kind: {
+      type: 'string',
+      enum: ['income', 'expense'],
+      description: 'Whether this recurring entry generates income or an expense.',
+      example: 'expense',
+    },
+    cat: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: 'Category ObjectId. Must be owned by the user.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c3',
+    },
+    wallet: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: 'Wallet ObjectId. Must be owned by the user.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c5',
+    },
+    amount: {
+      type: 'number',
+      minimum: 0,
+      maximum: 1e12,
+      description: 'Amount posted each time the schedule fires.',
+      example: 30,
+    },
+    note: {
+      type: 'string',
+      maxLength: 500,
+      description: 'Optional label or note.',
+      example: 'Netflix subscription',
+    },
+    every: {
+      type: 'string',
+      enum: ['month', 'week'],
+      description: 'Recurrence frequency. Defaults to "month" when omitted.',
+      example: 'month',
+    },
+    nextDate: {
+      type: 'string',
+      maxLength: 32,
+      description: 'Next scheduled fire date (YYYY-MM-DD).',
+      example: '2026-02-01',
+    },
+    enabled: {
+      type: 'boolean',
+      description: 'Whether the schedule is active. Defaults to true.',
+      example: true,
+    },
   },
   additionalProperties: false,
 } as const;
@@ -31,14 +71,54 @@ const recurringBody = {
 const recurringPatchBody = {
   type: 'object',
   properties: {
-    kind: { type: 'string', enum: ['income', 'expense'] },
-    cat: { type: 'string', pattern: OBJECT_ID_PATTERN },
-    wallet: { type: 'string', pattern: OBJECT_ID_PATTERN },
-    amount: { type: 'number', minimum: 0, maximum: 1e12 },
-    note: { type: 'string', maxLength: 500 },
-    every: { type: 'string', enum: ['month', 'week'] },
-    nextDate: { type: 'string', maxLength: 32 },
-    enabled: { type: 'boolean' },
+    kind: {
+      type: 'string',
+      enum: ['income', 'expense'],
+      description: 'Income or expense.',
+      example: 'expense',
+    },
+    cat: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: 'Category ObjectId. Must be owned by the user.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c3',
+    },
+    wallet: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: 'Wallet ObjectId. Must be owned by the user.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c5',
+    },
+    amount: {
+      type: 'number',
+      minimum: 0,
+      maximum: 1e12,
+      description: 'Amount per occurrence.',
+      example: 30,
+    },
+    note: {
+      type: 'string',
+      maxLength: 500,
+      description: 'Optional label or note.',
+      example: 'Netflix subscription',
+    },
+    every: {
+      type: 'string',
+      enum: ['month', 'week'],
+      description: 'Recurrence frequency.',
+      example: 'month',
+    },
+    nextDate: {
+      type: 'string',
+      maxLength: 32,
+      description: 'Next scheduled fire date (YYYY-MM-DD).',
+      example: '2026-02-01',
+    },
+    enabled: {
+      type: 'boolean',
+      description: 'Set to false to pause the schedule without deleting it.',
+      example: true,
+    },
   },
   additionalProperties: false,
 } as const;
@@ -50,11 +130,13 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Recurring'],
         summary: 'List recurring entries',
-        description: 'Returns all recurring entries for the user, sorted by next due date.',
+        description: 'Returns all recurring entries for the user, sorted by next due date ascending.',
         response: {
           200: itemsResponse(recurringEntity),
-          401: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -68,14 +150,17 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Recurring'],
         summary: 'Create recurring entry',
-        description: 'Creates a recurring income or expense schedule.',
+        description:
+          'Creates a recurring income or expense schedule. Both the referenced category and wallet must be owned by the user.',
         body: recurringBody,
         response: {
           200: itemResponse(recurringEntity),
-          400: errorResponse,
-          401: errorResponse,
-          404: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['category_not_found', 'wallet_not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -96,14 +181,18 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Recurring'],
         summary: 'Update recurring entry',
-        description: 'Patches one or more fields on an existing recurring entry.',
+        description:
+          'Patches one or more fields on an existing recurring entry. If cat or wallet are changed they must still be owned by the user.',
         params: idParams,
         body: recurringPatchBody,
         response: {
           200: itemResponse(recurringEntity),
-          401: errorResponse,
-          404: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found', 'category_not_found', 'wallet_not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -131,13 +220,15 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Recurring'],
         summary: 'Delete recurring entry',
-        description: 'Permanently deletes a recurring entry.',
+        description: 'Permanently deletes a recurring entry. In-flight scheduled transactions are not affected.',
         params: idParams,
         response: {
           200: okResponse,
-          401: errorResponse,
-          404: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },

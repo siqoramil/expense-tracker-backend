@@ -2,7 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { Types } from 'mongoose';
 import { withMaybeTransaction } from '../lib/db-tx.js';
 import {
-  errorResponse,
+  errorResponseWith,
   itemResponse,
   itemsResponse,
   OBJECT_ID_PATTERN,
@@ -41,16 +41,47 @@ const delta = (kind: 'income' | 'expense', amount: number) =>
 const txBodySchema = {
   type: 'object',
   properties: {
-    kind: { type: 'string', enum: ['income', 'expense'] },
+    kind: {
+      type: 'string',
+      enum: ['income', 'expense'],
+      description: 'Whether this transaction is income or expense.',
+      example: 'expense',
+    },
     // cat is an ObjectId on the model (Schema.Types.ObjectId). Accepting
     // a free-form string here let arbitrary input slip through to
-    // Mongoose, which then threw CastError → 500. Match the model so
+    // Mongoose, which then threw CastError -> 500. Match the model so
     // bad input is rejected at the edge with 400.
-    cat: { type: 'string', pattern: OBJECT_ID_PATTERN },
-    wallet: { type: 'string', pattern: OBJECT_ID_PATTERN },
-    amount: { type: 'number', minimum: 0, maximum: 1e12 },
-    note: { type: 'string', maxLength: 500 },
-    date: { type: 'string', pattern: DATE_RX.source },
+    cat: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: 'Category ObjectId. Must be owned by the user.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c3',
+    },
+    wallet: {
+      type: 'string',
+      pattern: OBJECT_ID_PATTERN,
+      description: 'Wallet ObjectId. Must be owned by the user. Balance is updated atomically.',
+      example: '64a1f2e3b4c5d6e7f8a9b0c5',
+    },
+    amount: {
+      type: 'number',
+      minimum: 0,
+      maximum: 1e12,
+      description: 'Transaction amount (non-negative). For expenses, the wallet balance is decremented.',
+      example: 12.5,
+    },
+    note: {
+      type: 'string',
+      maxLength: 500,
+      description: 'Optional free-text note.',
+      example: 'Lunch at cafe',
+    },
+    date: {
+      type: 'string',
+      pattern: DATE_RX.source,
+      description: 'Transaction date in YYYY-MM-DD format.',
+      example: '2026-01-15',
+    },
   },
   additionalProperties: false,
 } as const;
@@ -59,10 +90,10 @@ const statsResponse = {
   type: 'object',
   required: ['income', 'expense', 'net', 'count'],
   properties: {
-    income: { type: 'number', description: 'Sum of income amounts.' },
-    expense: { type: 'number', description: 'Sum of expense amounts.' },
-    net: { type: 'number', description: 'income − expense.' },
-    count: { type: 'integer', description: 'Total transactions in the month.' },
+    income: { type: 'number', description: 'Sum of all income transaction amounts in the month.', example: 3000 },
+    expense: { type: 'number', description: 'Sum of all expense transaction amounts in the month.', example: 1200.5 },
+    net: { type: 'number', description: 'income minus expense.', example: 1799.5 },
+    count: { type: 'integer', description: 'Total number of transactions in the month.', example: 14 },
   },
 } as const;
 
@@ -73,25 +104,41 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Transactions'],
         summary: 'List transactions',
         description:
-          "Returns the user's transactions, optionally filtered by month (YYYY-MM) and/or kind.",
+          "Returns the user's transactions sorted by date descending (most recent first), optionally filtered by month (YYYY-MM) and/or kind. Default limit is 1000.",
         querystring: {
           type: 'object',
           properties: {
             month: {
               type: 'string',
               pattern: MONTH_RX.source,
-              description: 'Filter to a single month (e.g. "2026-05").',
+              description: 'Filter to a single calendar month, e.g. "2026-05".',
+              example: '2026-01',
             },
-            kind: { type: 'string', enum: ['income', 'expense'] },
-            limit: { type: 'integer', minimum: 1, maximum: 1000, default: 1000 },
+            kind: {
+              type: 'string',
+              enum: ['income', 'expense'],
+              description: 'Filter to only income or only expense transactions.',
+              example: 'expense',
+            },
+            limit: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 1000,
+              default: 1000,
+              description: 'Maximum number of results to return. Default: 1000.',
+              example: 50,
+            },
           },
           additionalProperties: false,
         },
         response: {
           200: itemsResponse(transactionEntity),
-          401: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -114,17 +161,20 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/',
     {
       schema: {
+        tags: ['Transactions'],
         summary: 'Create transaction',
-        description: 'Creates a transaction and atomically updates the wallet balance.',
+        description:
+          'Creates a transaction and atomically adjusts the wallet balance (income adds to balance, expense subtracts). Both the category and wallet must be owned by the authenticated user.',
         body: {
           ...txBodySchema,
           required: ['kind', 'cat', 'wallet', 'amount', 'date'],
         },
         response: {
           200: itemResponse(transactionEntity),
-          400: errorResponse,
-          401: errorResponse,
-          404: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['category_not_found', 'wallet_not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -151,19 +201,29 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Transactions'],
         summary: 'Update transaction',
         description:
-          'Updates a transaction and atomically reverses the previous wallet effect before applying the new one.',
+          'Updates a transaction and atomically reverses the previous wallet balance effect before applying the new one. Any changed category or wallet must be owned by the user.',
         params: {
           type: 'object',
-          properties: { id: { type: 'string', pattern: OBJECT_ID_PATTERN } },
+          properties: {
+            id: {
+              type: 'string',
+              pattern: OBJECT_ID_PATTERN,
+              description: '24-hex ObjectId of the transaction to update.',
+              example: '64a1f2e3b4c5d6e7f8a9b0c6',
+            },
+          },
           required: ['id'],
         },
         body: txBodySchema,
         response: {
           200: itemResponse(transactionEntity),
-          401: errorResponse,
-          404: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found', 'category_not_found', 'wallet_not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -176,7 +236,7 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
 
         const next = { ...old.toObject(), ...req.body };
 
-        // Run the category and wallet ownership checks in parallel — both are
+        // Run the category and wallet ownership checks in parallel -- both are
         // reads and are independent of each other.
         const [catOk, newWalletOk] = await Promise.all([
           req.body.cat
@@ -214,18 +274,27 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/:id',
     {
       schema: {
+        tags: ['Transactions'],
         summary: 'Delete transaction',
         description:
           'Deletes a transaction and atomically reverses its effect on the wallet balance.',
         params: {
           type: 'object',
-          properties: { id: { type: 'string', pattern: OBJECT_ID_PATTERN } },
+          properties: {
+            id: {
+              type: 'string',
+              pattern: OBJECT_ID_PATTERN,
+              description: '24-hex ObjectId of the transaction to delete.',
+              example: '64a1f2e3b4c5d6e7f8a9b0c6',
+            },
+          },
           required: ['id'],
         },
         response: {
           200: okResponse,
-          401: errorResponse,
-          404: errorResponse,
+          401: errorResponseWith(['unauthorized']),
+          404: errorResponseWith(['not_found']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
@@ -250,22 +319,27 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
     '/stats/:month',
     {
       schema: {
+        tags: ['Transactions'],
         summary: 'Monthly transaction stats',
-        description: 'Aggregates income, expense, net, and count for the given month.',
+        description:
+          'Aggregates total income, total expense, net (income minus expense), and transaction count for the given calendar month. Returns zeros for all fields when the user has no transactions that month.',
         params: {
           type: 'object',
           properties: {
             month: {
               type: 'string',
               pattern: MONTH_RX.source,
-              description: 'YYYY-MM',
+              description: 'Calendar month in YYYY-MM format.',
+              example: '2026-01',
             },
           },
           required: ['month'],
         },
         response: {
           200: statsResponse,
-          401: errorResponse,
+          400: errorResponseWith(['bad_request']),
+          401: errorResponseWith(['unauthorized']),
+          500: errorResponseWith(['internal_error']),
         },
       },
     },
