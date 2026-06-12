@@ -1,0 +1,56 @@
+name: CI/CD
+
+# Runs on every push and PR to main. Pushes to main additionally deploy to the
+# VPS over SSH after tests pass. PRs only run the test job (no deploy).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Typecheck and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: yarn typecheck
+      - run: yarn test
+
+  deploy:
+    name: Deploy to VPS
+    needs: test
+    # Deploy only on a real push to main, never on PRs.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # A GitHub Environment lets you require manual approval before deploy and
+    # scope the secrets to this step. Optional: create it in repo Settings.
+    environment: production
+    concurrency:
+      # Never run two deploys at once; a newer push cancels an in-flight one.
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/extracker
+            git pull origin main
+            # Rebuild and restart only what changed; .env stays on the VPS and
+            # is never overwritten by the repo.
+            docker compose up -d --build
+            # Drop dangling images from previous builds so disk doesn't fill up.
+            docker image prune -f
+            docker compose ps
