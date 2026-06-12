@@ -6,9 +6,8 @@
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "src",
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     },
     "strict": true,
     "esModuleInterop": true,
