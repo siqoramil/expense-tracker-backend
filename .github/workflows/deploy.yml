@@ -36,10 +36,12 @@ jobs:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.2
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          # Host and user are not secrets (the IP is already public via DNS),
+          # so they live here directly. Only the private key is a secret.
+          host: 185.243.215.127
+          username: root
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          port: 22
           # `set -e` in the script below aborts on the first failing command.
           script: |
             set -e
