@@ -34,22 +34,12 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          # Host and user are not secrets (the IP is already public via DNS),
-          # so they live here directly. Only the private key is a secret.
-          host: 185.243.215.127
-          username: root
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: 22
-          # `set -e` in the script below aborts on the first failing command.
-          script: |
-            set -e
-            cd ~/extracker
-            git pull origin main
-            # Rebuild and restart only what changed; .env stays on the VPS and
-            # is never overwritten by the repo.
-            docker compose up -d --build
-            # Drop dangling images from previous builds so disk doesn't fill up.
-            docker image prune -f
-            docker compose ps
+        # The private key is stored base64-encoded in VPS_SSH_KEY_B64 (a single
+        # line, so it can't get corrupted by copy/paste line-wrapping). We decode
+        # it to a file and drive a plain ssh session. Host and user are public.
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@185.243.215.127 \
+            "set -e && cd ~/extracker && git pull origin main && docker compose up -d --build && docker image prune -f && docker compose ps"
