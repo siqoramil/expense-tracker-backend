@@ -1,3 +1,4 @@
+import type { ClientSession } from 'mongoose';
 import { Budget } from '../models/Budget.js';
 
 // Data access for budgets. Every query is scoped by userId so a user can only
@@ -25,7 +26,7 @@ export const budgetRepository = {
     return Budget.deleteOne({ _id: id, userId });
   },
 
-  deleteByUser(userId: string, session?: import('mongoose').ClientSession | null) {
+  deleteByUser(userId: string, session?: ClientSession | null) {
     return Budget.deleteMany({ userId }, session ? { session } : {});
   },
 };
