@@ -13,6 +13,11 @@ export class AppError extends Error {
   ) {
     super(code);
     this.name = new.target.name;
+    // Restore the prototype chain: when this class is transpiled to a target
+    // that downlevels `class extends Error`, the instance's prototype is set to
+    // Error.prototype, which breaks `err instanceof AppError` in the global
+    // error handler. Re-pointing it keeps instanceof working at runtime.
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 

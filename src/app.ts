@@ -120,15 +120,9 @@ export const buildApp = async () => {
     async () => ({ ok: true, ts: Date.now() }),
   );
 
-  await app.register(authRoutes, { prefix: '/auth' });
-  await app.register(categoriesRoutes, { prefix: '/categories' });
-  await app.register(walletsRoutes, { prefix: '/wallets' });
-  await app.register(transactionsRoutes, { prefix: '/tx' });
-  await app.register(debtsRoutes, { prefix: '/debts' });
-  await app.register(budgetsRoutes, { prefix: '/budgets' });
-  await app.register(recurringRoutes, { prefix: '/recurring' });
-  await app.register(notificationsRoutes, { prefix: '/notifs' });
-
+  // The error handler MUST be registered before the route plugins so it is
+  // inherited by their encapsulated contexts. Registered after, it never runs
+  // for errors thrown inside those routes (services throw typed AppErrors).
   app.setErrorHandler(
     (
       err: Error & { statusCode?: number; validation?: unknown; validationContext?: string },
@@ -164,6 +158,15 @@ export const buildApp = async () => {
       return reply.code(status).send({ error: safe });
     },
   );
+
+  await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(categoriesRoutes, { prefix: '/categories' });
+  await app.register(walletsRoutes, { prefix: '/wallets' });
+  await app.register(transactionsRoutes, { prefix: '/tx' });
+  await app.register(debtsRoutes, { prefix: '/debts' });
+  await app.register(budgetsRoutes, { prefix: '/budgets' });
+  await app.register(recurringRoutes, { prefix: '/recurring' });
+  await app.register(notificationsRoutes, { prefix: '/notifs' });
 
   return app;
 };
