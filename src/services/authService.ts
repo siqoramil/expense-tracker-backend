@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
+import type { User, VerificationCode } from '@/models';
 import {
   BadRequestError,
   ConflictError,
@@ -8,26 +9,26 @@ import {
   ServiceUnavailableError,
   TooManyRequestsError,
   UnauthorizedError,
-} from '../core/errors.js';
-import { isDuplicateKeyError } from '../core/mongoErrors.js';
-import { withMaybeTransaction } from '../lib/db-tx.js';
-import { seedDefaultCategories } from '../lib/defaultCategories.js';
-import { seedDefaultWallets } from '../lib/defaultWallets.js';
-import { env } from '../lib/env.js';
-import { generateCode, sendVerificationCode } from '../lib/mailer.js';
-import { normalizeEmail } from '../lib/normalize.js';
-import { DUMMY_PASSWORD_HASH, safeCodeEqual } from '../lib/security.js';
-import type { User } from '../models/User.js';
-import type { VerificationCode } from '../models/VerificationCode.js';
-import { budgetRepository } from '../repositories/budgetRepository.js';
-import { categoryRepository } from '../repositories/categoryRepository.js';
-import { debtRepository } from '../repositories/debtRepository.js';
-import { notificationRepository } from '../repositories/notificationRepository.js';
-import { recurringRepository } from '../repositories/recurringRepository.js';
-import { transactionRepository } from '../repositories/transactionRepository.js';
-import { userRepository } from '../repositories/userRepository.js';
-import { verificationCodeRepository } from '../repositories/verificationCodeRepository.js';
-import { walletRepository } from '../repositories/walletRepository.js';
+  isDuplicateKeyError,
+} from '@/core';
+import { DUMMY_PASSWORD_HASH, safeCodeEqual } from '@/lib/security.js';
+import {
+  budgetRepository,
+  categoryRepository,
+  debtRepository,
+  notificationRepository,
+  recurringRepository,
+  transactionRepository,
+  userRepository,
+  verificationCodeRepository,
+  walletRepository,
+} from '@/repositories';
+import { env } from '@/lib/env.js';
+import { generateCode, sendVerificationCode } from '@/lib/mailer.js';
+import { normalizeEmail } from '@/lib/normalize.js';
+import { seedDefaultCategories } from '@/lib/defaultCategories.js';
+import { seedDefaultWallets } from '@/lib/defaultWallets.js';
+import { withMaybeTransaction } from '@/lib/db-tx.js';
 
 // -- Constants ----------------------------------------------------------------
 
@@ -372,10 +373,7 @@ export const authService = {
 
   // Attaches a Google sub to the authenticated account. The token's email
   // must match the account email (closes the cross-account link takeover).
-  async linkGoogle(
-    userId: string,
-    idToken: string,
-  ): Promise<InstanceType<typeof User>> {
+  async linkGoogle(userId: string, idToken: string): Promise<InstanceType<typeof User>> {
     if (!googleClient || googleAudiences.length === 0) {
       throw new ServiceUnavailableError('google_auth_disabled');
     }

@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { Debt } from '../models/Debt.js';
+import { Debt } from '@/models';
 
 type PaymentInput = { amount: number; date: string };
 

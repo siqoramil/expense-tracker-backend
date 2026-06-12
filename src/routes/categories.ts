@@ -6,15 +6,27 @@ import {
   itemResponse,
   itemsResponse,
   okResponse,
-} from '../lib/schemas.js';
-import { categoryService } from '../services/categoryService.js';
+} from '@/lib/schemas.js';
+import { categoryService } from '@/services';
 
 const labelSchema = {
   type: 'object',
   required: ['en', 'uz'],
   properties: {
-    en: { type: 'string', minLength: 1, maxLength: 80, description: 'English label.', example: 'Food' },
-    uz: { type: 'string', minLength: 1, maxLength: 80, description: 'Uzbek label.', example: 'Oziq-ovqat' },
+    en: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 80,
+      description: 'English label.',
+      example: 'Food',
+    },
+    uz: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 80,
+      description: 'Uzbek label.',
+      example: 'Oziq-ovqat',
+    },
   },
   additionalProperties: false,
 } as const;
@@ -110,7 +122,8 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Categories'],
         summary: 'Create category',
-        description: 'Creates an income or expense category with a bilingual label, icon slug, and hex color.',
+        description:
+          'Creates an income or expense category with a bilingual label, icon slug, and hex color.',
         body: categoryBody,
         response: {
           200: itemResponse(categoryEntity),
@@ -130,7 +143,8 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Categories'],
         summary: 'Update category',
-        description: 'Patches one or more fields on an existing category owned by the user. Unknown fields are rejected.',
+        description:
+          'Patches one or more fields on an existing category owned by the user. Unknown fields are rejected.',
         params: idParams,
         body: categoryPatchBody,
         response: {

@@ -1,5 +1,5 @@
 import { type ClientSession, Types } from 'mongoose';
-import { Transaction } from '../models/Transaction.js';
+import { Transaction } from '@/models';
 
 type TxInput = {
   kind: 'income' | 'expense';
@@ -14,7 +14,10 @@ type TxInput = {
 // transactionService (which composes this with walletRepository inside a
 // withMaybeTransaction session); this layer is pure persistence.
 export const transactionRepository = {
-  list(userId: string, opts: { range?: { gte: string; lt: string }; kind?: 'income' | 'expense'; limit: number }) {
+  list(
+    userId: string,
+    opts: { range?: { gte: string; lt: string }; kind?: 'income' | 'expense'; limit: number },
+  ) {
     const filter: Record<string, unknown> = { userId };
     if (opts.range) filter.date = { $gte: opts.range.gte, $lt: opts.range.lt };
     if (opts.kind) filter.kind = opts.kind;
@@ -31,7 +34,12 @@ export const transactionRepository = {
     );
   },
 
-  updateForUser(id: string, userId: string, patch: Partial<TxInput>, session?: ClientSession | null) {
+  updateForUser(
+    id: string,
+    userId: string,
+    patch: Partial<TxInput>,
+    session?: ClientSession | null,
+  ) {
     return Transaction.findOneAndUpdate(
       { _id: id, userId },
       { $set: patch },
@@ -52,7 +60,11 @@ export const transactionRepository = {
   },
 
   async statsForMonth(userId: string, range: { gte: string; lt: string }) {
-    const grouped = await Transaction.aggregate<{ _id: 'income' | 'expense'; sum: number; count: number }>([
+    const grouped = await Transaction.aggregate<{
+      _id: 'income' | 'expense';
+      sum: number;
+      count: number;
+    }>([
       { $match: { userId: new Types.ObjectId(userId), date: { $gte: range.gte, $lt: range.lt } } },
       { $project: { _id: 0, kind: 1, amount: 1 } },
       { $group: { _id: '$kind', sum: { $sum: '$amount' }, count: { $sum: 1 } } },

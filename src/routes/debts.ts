@@ -6,8 +6,8 @@ import {
   itemResponse,
   itemsResponse,
   okResponse,
-} from '../lib/schemas.js';
-import { debtService } from '../services/debtService.js';
+} from '@/lib/schemas.js';
+import { debtService } from '@/services';
 
 type DebtBody = {
   direction: 'owe_me' | 'i_owe';
@@ -118,7 +118,8 @@ const paymentBody = {
       type: 'number',
       minimum: 0,
       maximum: 1e12,
-      description: 'Amount being paid. Automatically clamped to the remaining unpaid balance (amount - paid).',
+      description:
+        'Amount being paid. Automatically clamped to the remaining unpaid balance (amount - paid).',
       example: 50,
     },
     date: {
@@ -250,7 +251,12 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => ({
-      item: await debtService.addPayment(req.user.sub, req.params.id, req.body.amount, req.body.date),
+      item: await debtService.addPayment(
+        req.user.sub,
+        req.params.id,
+        req.body.amount,
+        req.body.date,
+      ),
     }),
   );
 

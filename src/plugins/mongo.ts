@@ -1,6 +1,6 @@
 import fp from 'fastify-plugin';
 import mongoose from 'mongoose';
-import { env } from '../lib/env.js';
+import { env } from '@/lib/env.js';
 
 export default fp(async (app) => {
   mongoose.connection.on('error', (err) => app.log.error(err, 'mongo connection error'));

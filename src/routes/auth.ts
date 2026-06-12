@@ -1,13 +1,8 @@
 import type { FastifyPluginAsync } from 'fastify';
-import {
-  authResponse,
-  codeSentResponse,
-  errorResponseWith,
-  userResponse,
-} from '../lib/schemas.js';
-import { normalizeEmail } from '../lib/normalize.js';
-import type { User } from '../models/User.js';
-import { authService, VERIFIED_TOKEN_TTL } from '../services/authService.js';
+import type { User } from '@/models';
+import { VERIFIED_TOKEN_TTL, authService } from '@/services';
+import { authResponse, codeSentResponse, errorResponseWith, userResponse } from '@/lib/schemas.js';
+import { normalizeEmail } from '@/lib/normalize.js';
 
 // At least 8 chars, must contain a letter and a digit.
 const PASSWORD_PATTERN = '^(?=.*[A-Za-z])(?=.*\\d).{8,128}$';
@@ -127,7 +122,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         tags: ['Auth'],
         summary: 'Sign in with Google',
         description:
-          "Verifies a Google ID token, then creates or links a local user account and returns a signed JWT. Returns 503 when Google sign-in is not configured on the server. Returns 409 when the Google email matches an existing password-only account that has not yet explicitly linked Google (use POST /auth/google/link instead).",
+          'Verifies a Google ID token, then creates or links a local user account and returns a signed JWT. Returns 503 when Google sign-in is not configured on the server. Returns 409 when the Google email matches an existing password-only account that has not yet explicitly linked Google (use POST /auth/google/link instead).',
         body: {
           type: 'object',
           required: ['idToken'],
@@ -136,7 +131,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               type: 'string',
               minLength: 20,
               maxLength: 4096,
-              description: 'Google-issued ID token obtained from the client SDK (sign_in_with_credential).',
+              description:
+                'Google-issued ID token obtained from the client SDK (sign_in_with_credential).',
               example: 'eyJhbGciOiJSUzI1NiIsImtpZCI6Ii4uLiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig',
             },
           },
@@ -216,7 +212,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Auth'],
         summary: 'Get current user',
-        description: 'Returns the profile of the authenticated user. The 404 case occurs when the JWT is valid but the user document was deleted between token issuance and this call.',
+        description:
+          'Returns the profile of the authenticated user. The 404 case occurs when the JWT is valid but the user document was deleted between token issuance and this call.',
         response: {
           200: userResponse,
           401: errorResponseWith(['unauthorized']),
@@ -282,8 +279,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 },
                 dark: { type: 'boolean', description: 'Dark mode enabled.', example: false },
                 pin: { type: 'boolean', description: 'PIN lock enabled.', example: false },
-                notifications: { type: 'boolean', description: 'Push notifications enabled.', example: true },
-                biometric: { type: 'boolean', description: 'Biometric unlock enabled.', example: false },
+                notifications: {
+                  type: 'boolean',
+                  description: 'Push notifications enabled.',
+                  example: true,
+                },
+                biometric: {
+                  type: 'boolean',
+                  description: 'Biometric unlock enabled.',
+                  example: false,
+                },
               },
               additionalProperties: false,
             },
@@ -353,7 +358,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             password: {
               type: 'string',
               maxLength: 128,
-              description: 'Current password. Required when the account has a password set (hasPassword=true).',
+              description:
+                'Current password. Required when the account has a password set (hasPassword=true).',
               example: 'Secret1234',
             },
             idToken: {
@@ -368,8 +374,17 @@ const authRoutes: FastifyPluginAsync = async (app) => {
           additionalProperties: false,
         },
         response: {
-          204: { type: 'object', description: 'Account and all associated data permanently deleted.' },
-          400: errorResponseWith(['bad_request', 'password_required', 'id_token_required', 'code_expired', 'invalid_code']),
+          204: {
+            type: 'object',
+            description: 'Account and all associated data permanently deleted.',
+          },
+          400: errorResponseWith([
+            'bad_request',
+            'password_required',
+            'id_token_required',
+            'code_expired',
+            'invalid_code',
+          ]),
           401: errorResponseWith(['unauthorized', 'invalid_credentials', 'invalid_google_token']),
           404: errorResponseWith(['not_found']),
           423: errorResponseWith(['account_locked']),
@@ -448,14 +463,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             password: {
               type: 'string',
               maxLength: 128,
-              description: 'Current password. Required when the account has a password set (hasPassword=true).',
+              description:
+                'Current password. Required when the account has a password set (hasPassword=true).',
               example: 'Secret1234',
             },
             idToken: {
               type: 'string',
               minLength: 20,
               maxLength: 4096,
-              description: 'Fresh Google ID token. Required when the account is Google-only (hasPassword=false).',
+              description:
+                'Fresh Google ID token. Required when the account is Google-only (hasPassword=false).',
               example: 'eyJhbGciOiJSUzI1NiIsImtpZCI6Ii4uLiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig',
             },
           },
@@ -463,7 +480,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         },
         response: {
           200: userResponse,
-          400: errorResponseWith(['bad_request', 'password_required', 'id_token_required', 'code_expired', 'invalid_code', 'invalid_state']),
+          400: errorResponseWith([
+            'bad_request',
+            'password_required',
+            'id_token_required',
+            'code_expired',
+            'invalid_code',
+            'invalid_state',
+          ]),
           401: errorResponseWith(['unauthorized', 'invalid_credentials', 'invalid_google_token']),
           404: errorResponseWith(['not_found']),
           409: errorResponseWith(['email_taken']),
@@ -553,8 +577,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               ok: { type: 'boolean', example: true },
               verifiedToken: {
                 type: 'string',
-                description: 'Short-lived JWT (2 min) that POST /auth/password/reset requires as proof the code was verified.',
-                example: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYW5lQGV4YW1wbGUuY29tIiwicHVycG9zZSI6InBhc3N3b3JkX3Jlc2V0X3ZlcmlmaWVkIn0.sig',
+                description:
+                  'Short-lived JWT (2 min) that POST /auth/password/reset requires as proof the code was verified.',
+                example:
+                  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYW5lQGV4YW1wbGUuY29tIiwicHVycG9zZSI6InBhc3N3b3JkX3Jlc2V0X3ZlcmlmaWVkIn0.sig',
               },
             },
           },
@@ -600,14 +626,16 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             code: {
               type: 'string',
               pattern: '^[0-9]{6}$',
-              description: '6-digit code received via email (same code used in /password/verify-code).',
+              description:
+                '6-digit code received via email (same code used in /password/verify-code).',
               example: '203847',
             },
             newPassword: {
               type: 'string',
               pattern: PASSWORD_PATTERN,
               maxLength: 128,
-              description: 'New password. At least 8 characters; must contain at least one letter and one digit.',
+              description:
+                'New password. At least 8 characters; must contain at least one letter and one digit.',
               example: 'NewSecret5678',
             },
             verifiedToken: {
@@ -615,7 +643,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
               minLength: 20,
               maxLength: 2048,
               description: 'Short-lived JWT returned by POST /auth/password/verify-code.',
-              example: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYW5lQGV4YW1wbGUuY29tIiwicHVycG9zZSI6InBhc3N3b3JkX3Jlc2V0X3ZlcmlmaWVkIn0.sig',
+              example:
+                'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJqYW5lQGV4YW1wbGUuY29tIiwicHVycG9zZSI6InBhc3N3b3JkX3Jlc2V0X3ZlcmlmaWVkIn0.sig',
             },
           },
           additionalProperties: false,

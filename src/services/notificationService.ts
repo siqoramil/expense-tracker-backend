@@ -1,5 +1,5 @@
-import { NotFoundError } from '../core/errors.js';
-import { notificationRepository } from '../repositories/notificationRepository.js';
+import { NotFoundError } from '@/core';
+import { notificationRepository } from '@/repositories';
 
 // Business logic for notifications. Throws typed AppErrors (mapped to HTTP by
 // the global error handler) so routes stay thin and transport-agnostic.

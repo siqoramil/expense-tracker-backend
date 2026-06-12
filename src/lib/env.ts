@@ -50,7 +50,9 @@ if (!jwtExpiresInMatch || Number(jwtExpiresInMatch[1]) === 0) {
   );
 }
 if (isProd) {
-  const seconds = Number(jwtExpiresInMatch[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[jwtExpiresInMatch[0].slice(-1) as 's' | 'm' | 'h' | 'd'];
+  const seconds =
+    Number(jwtExpiresInMatch[1]) *
+    { s: 1, m: 60, h: 3600, d: 86400 }[jwtExpiresInMatch[0].slice(-1) as 's' | 'm' | 'h' | 'd'];
   if (seconds < 3600) {
     throw new Error(
       `JWT_EXPIRES_IN must be at least 1h in production (got "${rawJwtExpiresIn}"). ` +

@@ -1,13 +1,13 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  OBJECT_ID_PATTERN,
   errorResponseWith,
   itemResponse,
   itemsResponse,
-  OBJECT_ID_PATTERN,
   okResponse,
   transactionEntity,
-} from '../lib/schemas.js';
-import { transactionService } from '../services/transactionService.js';
+} from '@/lib/schemas.js';
+import { transactionService } from '@/services';
 
 type TxBody = {
   kind: 'income' | 'expense';
@@ -46,7 +46,8 @@ const txBodySchema = {
       type: 'number',
       minimum: 0,
       maximum: 1e12,
-      description: 'Transaction amount (non-negative). For expenses, the wallet balance is decremented.',
+      description:
+        'Transaction amount (non-negative). For expenses, the wallet balance is decremented.',
       example: 12.5,
     },
     note: {
@@ -69,10 +70,22 @@ const statsResponse = {
   type: 'object',
   required: ['income', 'expense', 'net', 'count'],
   properties: {
-    income: { type: 'number', description: 'Sum of all income transaction amounts in the month.', example: 3000 },
-    expense: { type: 'number', description: 'Sum of all expense transaction amounts in the month.', example: 1200.5 },
+    income: {
+      type: 'number',
+      description: 'Sum of all income transaction amounts in the month.',
+      example: 3000,
+    },
+    expense: {
+      type: 'number',
+      description: 'Sum of all expense transaction amounts in the month.',
+      example: 1200.5,
+    },
     net: { type: 'number', description: 'income minus expense.', example: 1799.5 },
-    count: { type: 'integer', description: 'Total number of transactions in the month.', example: 14 },
+    count: {
+      type: 'integer',
+      description: 'Total number of transactions in the month.',
+      example: 14,
+    },
   },
 } as const;
 
@@ -183,7 +196,9 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => ({ item: await transactionService.update(req.user.sub, req.params.id, req.body) }),
+    async (req) => ({
+      item: await transactionService.update(req.user.sub, req.params.id, req.body),
+    }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -192,7 +207,8 @@ const transactionsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Transactions'],
         summary: 'Delete transaction',
-        description: 'Deletes a transaction and atomically reverses its effect on the wallet balance.',
+        description:
+          'Deletes a transaction and atomically reverses its effect on the wallet balance.',
         params: idParam,
         response: {
           200: okResponse,

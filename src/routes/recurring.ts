@@ -1,14 +1,14 @@
 import type { FastifyPluginAsync } from 'fastify';
 import {
+  OBJECT_ID_PATTERN,
   errorResponseWith,
   idParams,
   itemResponse,
   itemsResponse,
-  OBJECT_ID_PATTERN,
   okResponse,
   recurringEntity,
-} from '../lib/schemas.js';
-import { recurringService } from '../services/recurringService.js';
+} from '@/lib/schemas.js';
+import { recurringService } from '@/services';
 
 type RecurringInput = {
   kind: 'income' | 'expense';
@@ -141,7 +141,8 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Recurring'],
         summary: 'List recurring entries',
-        description: 'Returns all recurring entries for the user, sorted by next due date ascending.',
+        description:
+          'Returns all recurring entries for the user, sorted by next due date ascending.',
         response: {
           200: itemsResponse(recurringEntity),
           401: errorResponseWith(['unauthorized']),
@@ -202,7 +203,8 @@ const recurringRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Recurring'],
         summary: 'Delete recurring entry',
-        description: 'Permanently deletes a recurring entry. In-flight scheduled transactions are not affected.',
+        description:
+          'Permanently deletes a recurring entry. In-flight scheduled transactions are not affected.',
         params: idParams,
         response: {
           200: okResponse,

@@ -6,8 +6,8 @@ import {
   itemsResponse,
   notificationEntity,
   okResponse,
-} from '../lib/schemas.js';
-import { notificationService } from '../services/notificationService.js';
+} from '@/lib/schemas.js';
+import { notificationService } from '@/services';
 
 const notificationsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
@@ -49,7 +49,13 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => ({ items: await notificationService.list(req.user.sub, req.query.limit ?? 100, req.query.skip ?? 0) }),
+    async (req) => ({
+      items: await notificationService.list(
+        req.user.sub,
+        req.query.limit ?? 100,
+        req.query.skip ?? 0,
+      ),
+    }),
   );
 
   // POST / used to allow client-side creation of notifications. Removed:
@@ -64,7 +70,8 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Notifications'],
         summary: 'Mark notification as read',
-        description: 'Sets read=true on a single notification owned by the user. Idempotent: calling it again on an already-read notification still returns 200.',
+        description:
+          'Sets read=true on a single notification owned by the user. Idempotent: calling it again on an already-read notification still returns 200.',
         params: idParams,
         response: {
           200: itemResponse(notificationEntity),
@@ -83,7 +90,8 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Notifications'],
         summary: 'Mark all notifications as read',
-        description: 'Marks every unread notification belonging to the user as read in a single bulk write. Returns ok=true even when there were no unread notifications.',
+        description:
+          'Marks every unread notification belonging to the user as read in a single bulk write. Returns ok=true even when there were no unread notifications.',
         response: {
           200: okResponse,
           401: errorResponseWith(['unauthorized']),

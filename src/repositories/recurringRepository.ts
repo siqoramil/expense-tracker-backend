@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { Recurring } from '../models/Recurring.js';
+import { Recurring } from '@/models';
 
 type RecurringInput = {
   kind: 'income' | 'expense';
@@ -30,7 +30,11 @@ export const recurringRepository = {
   },
 
   updateForUser(id: string, userId: string, patch: Partial<RecurringInput>) {
-    return Recurring.findOneAndUpdate({ _id: id, userId }, { $set: patch }, { new: true, lean: true });
+    return Recurring.findOneAndUpdate(
+      { _id: id, userId },
+      { $set: patch },
+      { new: true, lean: true },
+    );
   },
 
   deleteForUser(id: string, userId: string) {

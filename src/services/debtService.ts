@@ -1,5 +1,5 @@
-import { BadRequestError, ConflictError, NotFoundError } from '../core/errors.js';
-import { debtRepository } from '../repositories/debtRepository.js';
+import { BadRequestError, ConflictError, NotFoundError } from '@/core';
+import { debtRepository } from '@/repositories';
 
 // Caps the embedded payments array per debt; far above any real use, but
 // bounds the document so it can never be grown toward Mongo's 16MB limit.

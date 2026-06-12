@@ -142,7 +142,8 @@ export const authResponse = {
     token: {
       type: 'string',
       description: 'Signed JWT bearer token. Include as: Authorization: Bearer <token>.',
-      example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGExZjJlM2I0YzVkNmU3ZjhhOWIwYzEifQ.sig',
+      example:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2NGExZjJlM2I0YzVkNmU3ZjhhOWIwYzEifQ.sig',
     },
     user: userEntity,
   },
@@ -248,7 +249,11 @@ export const notificationEntity = {
       },
     },
     date: { type: 'string', description: 'Event date (YYYY-MM-DD or ISO).', example: '2026-01-31' },
-    read: { type: 'boolean', description: 'Whether the user has read this notification.', example: false },
+    read: {
+      type: 'boolean',
+      description: 'Whether the user has read this notification.',
+      example: false,
+    },
   },
 } as const;
 
@@ -282,7 +287,11 @@ export const recurringEntity = {
       description: 'Recurrence frequency.',
       example: 'month',
     },
-    nextDate: { type: 'string', description: 'Next scheduled date (YYYY-MM-DD).', example: '2026-02-01' },
+    nextDate: {
+      type: 'string',
+      description: 'Next scheduled date (YYYY-MM-DD).',
+      example: '2026-02-01',
+    },
     enabled: { type: 'boolean', description: 'Whether the schedule is active.', example: true },
   },
 } as const;
@@ -329,7 +338,8 @@ export const walletEntity = {
     color: { type: 'string', description: 'Hex color string.', example: '#2ECC71' },
     balance: {
       type: 'number',
-      description: 'Current balance. Derived from transaction writes; do not set directly via PATCH.',
+      description:
+        'Current balance. Derived from transaction writes; do not set directly via PATCH.',
       example: 1250.75,
     },
   },

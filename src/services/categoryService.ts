@@ -1,9 +1,11 @@
-import { ConflictError, NotFoundError } from '../core/errors.js';
-import { seedDefaultCategories } from '../lib/defaultCategories.js';
-import { budgetRepository } from '../repositories/budgetRepository.js';
-import { categoryRepository } from '../repositories/categoryRepository.js';
-import { recurringRepository } from '../repositories/recurringRepository.js';
-import { transactionRepository } from '../repositories/transactionRepository.js';
+import { ConflictError, NotFoundError } from '@/core';
+import {
+  budgetRepository,
+  categoryRepository,
+  recurringRepository,
+  transactionRepository,
+} from '@/repositories';
+import { seedDefaultCategories } from '@/lib/defaultCategories.js';
 
 type CategoryCreate = {
   label: { en: string; uz: string };

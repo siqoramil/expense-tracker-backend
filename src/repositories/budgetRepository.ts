@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { Budget } from '../models/Budget.js';
+import { Budget } from '@/models';
 
 // Data access for budgets. Every query is scoped by userId so a user can only
 // ever touch their own documents (IDOR protection lives here, not in routes).

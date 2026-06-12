@@ -1,7 +1,5 @@
-import { ConflictError, NotFoundError } from '../core/errors.js';
-import { categoryRepository } from '../repositories/categoryRepository.js';
-import { recurringRepository } from '../repositories/recurringRepository.js';
-import { walletRepository } from '../repositories/walletRepository.js';
+import { ConflictError, NotFoundError } from '@/core';
+import { categoryRepository, recurringRepository, walletRepository } from '@/repositories';
 
 type RecurringInput = {
   kind: 'income' | 'expense';

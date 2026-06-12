@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { Category } from '../models/Category.js';
+import { Category } from '@/models';
 
 type CategoryInput = {
   label: { en: string; uz: string };
@@ -31,7 +31,11 @@ export const categoryRepository = {
   updateForUser(id: string, userId: string, patch: Partial<CategoryInput>) {
     // $set so a body key like "$unset" can never be interpreted as a Mongo
     // update operator (defence-in-depth alongside the strict route schema).
-    return Category.findOneAndUpdate({ _id: id, userId }, { $set: patch }, { new: true, lean: true });
+    return Category.findOneAndUpdate(
+      { _id: id, userId },
+      { $set: patch },
+      { new: true, lean: true },
+    );
   },
 
   deleteForUser(id: string, userId: string) {

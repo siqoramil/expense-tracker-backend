@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { Notification } from '../models/Notification.js';
+import { Notification } from '@/models';
 
 // Data access for notifications. Every query is scoped by userId so a user can
 // only ever touch their own documents (IDOR protection lives here, not in routes).

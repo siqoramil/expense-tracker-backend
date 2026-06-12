@@ -7,8 +7,8 @@ import {
   itemResponse,
   itemsResponse,
   okResponse,
-} from '../lib/schemas.js';
-import { budgetService } from '../services/budgetService.js';
+} from '@/lib/schemas.js';
+import { budgetService } from '@/services';
 
 const budgetsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
@@ -19,7 +19,8 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Budgets'],
         summary: 'List budgets',
-        description: 'Returns all budgets owned by the authenticated user, sorted by creation time.',
+        description:
+          'Returns all budgets owned by the authenticated user, sorted by creation time.',
         response: {
           200: itemsResponse(budgetEntity),
           401: errorResponseWith(['unauthorized']),

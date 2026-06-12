@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { VerificationCode } from '../models/VerificationCode.js';
+import { VerificationCode } from '@/models';
 
 type Purpose = 'password_reset' | 'email_change' | 'account_delete';
 

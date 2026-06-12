@@ -1,7 +1,5 @@
-import { ConflictError, NotFoundError } from '../core/errors.js';
-import { isDuplicateKeyError } from '../core/mongoErrors.js';
-import { budgetRepository } from '../repositories/budgetRepository.js';
-import { categoryRepository } from '../repositories/categoryRepository.js';
+import { ConflictError, NotFoundError, isDuplicateKeyError } from '@/core';
+import { budgetRepository, categoryRepository } from '@/repositories';
 
 // Business logic for budgets. Throws typed AppErrors (mapped to HTTP by the
 // global error handler) so routes stay thin and transport-agnostic.

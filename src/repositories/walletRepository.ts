@@ -1,7 +1,12 @@
 import type { ClientSession } from 'mongoose';
-import { Wallet } from '../models/Wallet.js';
+import { Wallet } from '@/models';
 
-type WalletInput = { name: { en: string; uz: string }; icon: string; color: string; balance?: number };
+type WalletInput = {
+  name: { en: string; uz: string };
+  icon: string;
+  color: string;
+  balance?: number;
+};
 
 // Data access for wallets. Cross-domain consumers (transactions, recurring)
 // use existsForUser/incBalance; everything is scoped by userId.

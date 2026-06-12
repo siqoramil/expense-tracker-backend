@@ -1,5 +1,5 @@
 import type { Types } from 'mongoose';
-import { Wallet } from '../models/Wallet.js';
+import { Wallet } from '@/models';
 
 interface DefaultWallet {
   name: { en: string; uz: string };
@@ -21,9 +21,7 @@ export const DEFAULT_WALLETS: DefaultWallet[] = [
 export async function seedDefaultWallets(userId: Types.ObjectId | string): Promise<void> {
   const existing = await Wallet.find({ userId }, { 'name.en': 1, _id: 0 }).lean();
 
-  const existingNames = new Set(
-    existing.filter((w) => w.name != null).map((w) => w.name!.en),
-  );
+  const existingNames = new Set(existing.filter((w) => w.name != null).map((w) => w.name!.en));
 
   const toInsert = DEFAULT_WALLETS.filter((d) => !existingNames.has(d.name.en)).map((d) => ({
     ...d,

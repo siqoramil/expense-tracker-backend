@@ -1,5 +1,5 @@
 import type { ClientSession } from 'mongoose';
-import { User } from '../models/User.js';
+import { User } from '@/models';
 
 // Data access for the User model. Service code receives and mutates the live
 // Mongoose document (to update failedLogins, lockedUntil, passwordHash, etc.)

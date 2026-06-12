@@ -1,9 +1,13 @@
-import { ConflictError, NotFoundError } from '../core/errors.js';
-import { seedDefaultWallets } from '../lib/defaultWallets.js';
-import { transactionRepository } from '../repositories/transactionRepository.js';
-import { walletRepository } from '../repositories/walletRepository.js';
+import { ConflictError, NotFoundError } from '@/core';
+import { seedDefaultWallets } from '@/lib/defaultWallets.js';
+import { transactionRepository, walletRepository } from '@/repositories';
 
-type WalletCreate = { name: { en: string; uz: string }; icon: string; color: string; balance?: number };
+type WalletCreate = {
+  name: { en: string; uz: string };
+  icon: string;
+  color: string;
+  balance?: number;
+};
 type WalletPatch = { name?: { en: string; uz: string }; icon?: string; color?: string };
 
 // Per-user document cap (abuse / storage-exhaustion guard).

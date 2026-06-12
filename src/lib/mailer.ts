@@ -4,7 +4,7 @@
 /* eslint-disable no-console */
 import { randomInt } from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
-import { env } from './env.js';
+import { env } from '@/lib/env.js';
 
 export const generateCode = () => String(randomInt(100000, 1_000_000));
 

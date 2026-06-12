@@ -1,8 +1,6 @@
-import { NotFoundError } from '../core/errors.js';
-import { withMaybeTransaction } from '../lib/db-tx.js';
-import { categoryRepository } from '../repositories/categoryRepository.js';
-import { transactionRepository } from '../repositories/transactionRepository.js';
-import { walletRepository } from '../repositories/walletRepository.js';
+import { NotFoundError } from '@/core';
+import { categoryRepository, transactionRepository, walletRepository } from '@/repositories';
+import { withMaybeTransaction } from '@/lib/db-tx.js';
 
 type TxBody = {
   kind: 'income' | 'expense';
@@ -80,7 +78,12 @@ export const transactionService = {
         -delta(old.kind, old.amount),
         session,
       );
-      await walletRepository.incBalance(String(nextWallet), userId, delta(nextKind, nextAmount), session);
+      await walletRepository.incBalance(
+        String(nextWallet),
+        userId,
+        delta(nextKind, nextAmount),
+        session,
+      );
 
       return transactionRepository.updateForUser(id, userId, body, session);
     });

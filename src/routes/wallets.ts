@@ -6,8 +6,8 @@ import {
   itemsResponse,
   okResponse,
   walletEntity,
-} from '../lib/schemas.js';
-import { walletService } from '../services/walletService.js';
+} from '@/lib/schemas.js';
+import { walletService } from '@/services';
 
 // POST accepts an initial `balance` to seed a wallet on creation. PATCH
 // deliberately omits it: ongoing balance changes must flow through /tx so
@@ -19,8 +19,18 @@ const walletCreateShape = {
     name: {
       type: 'object',
       properties: {
-        en: { type: 'string', maxLength: 80, description: 'Wallet name in English.', example: 'Cash' },
-        uz: { type: 'string', maxLength: 80, description: 'Wallet name in Uzbek.', example: 'Naqd pul' },
+        en: {
+          type: 'string',
+          maxLength: 80,
+          description: 'Wallet name in English.',
+          example: 'Cash',
+        },
+        uz: {
+          type: 'string',
+          maxLength: 80,
+          description: 'Wallet name in Uzbek.',
+          example: 'Naqd pul',
+        },
       },
       additionalProperties: false,
     },
@@ -55,8 +65,18 @@ const walletPatchShape = {
     name: {
       type: 'object',
       properties: {
-        en: { type: 'string', maxLength: 80, description: 'Wallet name in English.', example: 'Cash' },
-        uz: { type: 'string', maxLength: 80, description: 'Wallet name in Uzbek.', example: 'Naqd pul' },
+        en: {
+          type: 'string',
+          maxLength: 80,
+          description: 'Wallet name in English.',
+          example: 'Cash',
+        },
+        uz: {
+          type: 'string',
+          maxLength: 80,
+          description: 'Wallet name in Uzbek.',
+          example: 'Naqd pul',
+        },
       },
       additionalProperties: false,
     },
@@ -78,7 +98,12 @@ const walletPatchShape = {
   additionalProperties: false,
 } as const;
 
-type WalletCreateBody = { name: { en: string; uz: string }; icon: string; color: string; balance?: number };
+type WalletCreateBody = {
+  name: { en: string; uz: string };
+  icon: string;
+  color: string;
+  balance?: number;
+};
 type WalletPatchBody = { name?: { en: string; uz: string }; icon?: string; color?: string };
 
 const walletsRoutes: FastifyPluginAsync = async (app) => {
@@ -90,7 +115,8 @@ const walletsRoutes: FastifyPluginAsync = async (app) => {
       schema: {
         tags: ['Wallets'],
         summary: 'List wallets',
-        description: 'Returns every wallet owned by the authenticated user, sorted by creation time (oldest first).',
+        description:
+          'Returns every wallet owned by the authenticated user, sorted by creation time (oldest first).',
         response: {
           200: itemsResponse(walletEntity),
           401: errorResponseWith(['unauthorized']),
