@@ -3,6 +3,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { default as Ajv } from 'ajv';
 import Fastify from 'fastify';
+import { AppError } from './core/errors.js';
 import { env } from './lib/env.js';
 import authPlugin from './plugins/auth.js';
 import mongoPlugin from './plugins/mongo.js';
@@ -135,6 +136,11 @@ export const buildApp = async () => {
       reply,
     ) => {
       if (reply.sent) return;
+      // Typed application errors thrown by the service layer carry their own
+      // status code and snake_case error code.
+      if (err instanceof AppError) {
+        return reply.code(err.statusCode).send({ error: err.code });
+      }
       const status = err.statusCode ?? 500;
       if (status >= 500) {
         app.log.error(err);

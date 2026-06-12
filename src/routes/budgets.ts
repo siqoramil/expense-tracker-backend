@@ -8,8 +8,7 @@ import {
   itemsResponse,
   okResponse,
 } from '../lib/schemas.js';
-import { Budget } from '../models/Budget.js';
-import { Category } from '../models/Category.js';
+import { budgetService } from '../services/budgetService.js';
 
 const budgetsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
@@ -28,10 +27,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const items = await Budget.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
-      return { items };
-    },
+    async (req) => ({ items: await budgetService.list(req.user.sub) }),
   );
 
   app.post<{ Body: { cat: string; limit: number } }>(
@@ -72,19 +68,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const catOk = await Category.exists({ _id: req.body.cat, userId: req.user.sub });
-      if (!catOk) return reply.code(404).send({ error: 'category_not_found' });
-      try {
-        const budget = await Budget.create({ ...req.body, userId: req.user.sub });
-        return { item: budget };
-      } catch (err) {
-        if ((err as { code?: number }).code === 11000) {
-          return reply.code(409).send({ error: 'budget_exists' });
-        }
-        throw err;
-      }
-    },
+    async (req) => ({ item: await budgetService.create(req.user.sub, req.body) }),
   );
 
   app.patch<{ Params: { id: string }; Body: { limit?: number } }>(
@@ -117,17 +101,7 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const budget = await Budget.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        // Wrap in $set so a body key like "$unset" can never be interpreted as
-        // a Mongo update operator (defence-in-depth alongside the strict schema).
-        { $set: req.body },
-        { new: true, lean: true },
-      );
-      if (!budget) return reply.code(404).send({ error: 'not_found' });
-      return { item: budget };
-    },
+    async (req) => ({ item: await budgetService.update(req.user.sub, req.params.id, req.body) }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -146,9 +120,8 @@ const budgetsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const res = await Budget.deleteOne({ _id: req.params.id, userId: req.user.sub });
-      if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
+    async (req) => {
+      await budgetService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );
