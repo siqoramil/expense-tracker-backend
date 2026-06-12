@@ -7,14 +7,7 @@ import {
   itemsResponse,
   okResponse,
 } from '../lib/schemas.js';
-import { Debt } from '../models/Debt.js';
-
-// Caps the embedded payments array per debt; far above any real use, but
-// bounds the document so it can't be grown toward Mongo's 16MB limit.
-const MAX_DEBT_PAYMENTS = 1000;
-
-// Per-user document cap (abuse / storage-exhaustion guard).
-const MAX_DEBTS = 1000;
+import { debtService } from '../services/debtService.js';
 
 type DebtBody = {
   direction: 'owe_me' | 'i_owe';
@@ -169,12 +162,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const filter: Record<string, unknown> = { userId: req.user.sub };
-      if (req.query.archived !== 'true') filter.archived = { $ne: true };
-      const items = await Debt.find(filter).sort({ createdAt: -1 }).limit(1000).lean();
-      return { items };
-    },
+    async (req) => ({ items: await debtService.list(req.user.sub, req.query.archived === 'true') }),
   );
 
   app.post<{ Body: DebtBody }>(
@@ -195,13 +183,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      // Per-user cap: keep one account from creating unbounded documents.
-      const count = await Debt.countDocuments({ userId: req.user.sub });
-      if (count >= MAX_DEBTS) return reply.code(409).send({ error: 'limit_reached' });
-      const debt = await Debt.create({ ...req.body, userId: req.user.sub, paid: 0, payments: [] });
-      return { item: debt };
-    },
+    async (req) => ({ item: await debtService.create(req.user.sub, req.body) }),
   );
 
   app.patch<{ Params: { id: string }; Body: Partial<DebtBody> }>(
@@ -222,17 +204,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const debt = await Debt.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        // Wrap in $set so a body key like "$unset" can never be interpreted as
-        // a Mongo update operator (defence-in-depth alongside the strict schema).
-        { $set: req.body },
-        { new: true, lean: true },
-      );
-      if (!debt) return reply.code(404).send({ error: 'not_found' });
-      return { item: debt };
-    },
+    async (req) => ({ item: await debtService.update(req.user.sub, req.params.id, req.body) }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -251,9 +223,8 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const res = await Debt.deleteOne({ _id: req.params.id, userId: req.user.sub });
-      if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
+    async (req) => {
+      await debtService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );
@@ -278,24 +249,9 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const debt = await Debt.findOne({ _id: req.params.id, userId: req.user.sub });
-      if (!debt) return reply.code(404).send({ error: 'not_found' });
-      // Bound the embedded payments array so a single debt document can never
-      // be grown toward Mongo's 16MB cap by repeated payment writes.
-      if (debt.payments.length >= MAX_DEBT_PAYMENTS) {
-        return reply.code(409).send({ error: 'too_many_payments' });
-      }
-      // Read-modify-write race on `paid` is bounded by single-user usage: a user
-      // does not concurrently record payments for the same debt, so the clamp is safe.
-      const amount = Math.min(req.body.amount, debt.amount - debt.paid);
-      if (amount <= 0) return reply.code(400).send({ error: 'invalid_amount' });
-      const date = req.body.date ?? new Date().toISOString().slice(0, 10);
-      debt.payments.push({ amount, date });
-      debt.paid += amount;
-      await debt.save();
-      return { item: debt };
-    },
+    async (req) => ({
+      item: await debtService.addPayment(req.user.sub, req.params.id, req.body.amount, req.body.date),
+    }),
   );
 
   app.post<{ Params: { id: string } }>(
@@ -315,15 +271,7 @@ const debtsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const debt = await Debt.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        [{ $set: { archived: true, paid: '$amount' } }],
-        { new: true, lean: true },
-      );
-      if (!debt) return reply.code(404).send({ error: 'not_found' });
-      return { item: debt };
-    },
+    async (req) => ({ item: await debtService.archive(req.user.sub, req.params.id) }),
   );
 };
 

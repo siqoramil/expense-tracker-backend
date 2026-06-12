@@ -1,5 +1,4 @@
 import type { FastifyPluginAsync } from 'fastify';
-import { seedDefaultCategories } from '../lib/defaultCategories.js';
 import {
   categoryEntity,
   errorResponseWith,
@@ -8,10 +7,7 @@ import {
   itemsResponse,
   okResponse,
 } from '../lib/schemas.js';
-import { Category } from '../models/Category.js';
-
-// Per-user document cap (abuse / storage-exhaustion guard).
-const MAX_CATEGORIES = 300;
+import { categoryService } from '../services/categoryService.js';
 
 const labelSchema = {
   type: 'object',
@@ -98,19 +94,7 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const count = await Category.countDocuments({ userId: req.user.sub });
-      if (count === 0) {
-        // Backfill existing accounts that predate default-category seeding.
-        // ordered:false in insertMany makes this race-tolerant (duplicate-key
-        // errors on a concurrent seed are swallowed per-document).
-        await seedDefaultCategories(req.user.sub).catch(() => {
-          // Best-effort: a seed failure must not prevent the list from returning.
-        });
-      }
-      const items = await Category.find({ userId: req.user.sub }).sort({ createdAt: 1 }).lean();
-      return { items };
-    },
+    async (req) => ({ items: await categoryService.list(req.user.sub) }),
   );
 
   app.post<{
@@ -137,13 +121,7 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      // Per-user cap: keep one account from creating unbounded documents.
-      const count = await Category.countDocuments({ userId: req.user.sub });
-      if (count >= MAX_CATEGORIES) return reply.code(409).send({ error: 'limit_reached' });
-      const cat = await Category.create({ ...req.body, userId: req.user.sub });
-      return { item: cat };
-    },
+    async (req) => ({ item: await categoryService.create(req.user.sub, req.body) }),
   );
 
   app.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
@@ -164,17 +142,7 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const cat = await Category.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        // Wrap in $set so a body key like "$unset" can never be interpreted as
-        // a Mongo update operator (defence-in-depth alongside the strict schema).
-        { $set: req.body },
-        { new: true, lean: true },
-      );
-      if (!cat) return reply.code(404).send({ error: 'not_found' });
-      return { item: cat };
-    },
+    async (req) => ({ item: await categoryService.update(req.user.sub, req.params.id, req.body) }),
   );
 
   app.delete<{ Params: { id: string } }>(
@@ -189,13 +157,13 @@ const categoriesRoutes: FastifyPluginAsync = async (app) => {
           200: okResponse,
           401: errorResponseWith(['unauthorized']),
           404: errorResponseWith(['not_found']),
+          409: errorResponseWith(['category_in_use']),
           500: errorResponseWith(['internal_error']),
         },
       },
     },
-    async (req, reply) => {
-      const res = await Category.deleteOne({ _id: req.params.id, userId: req.user.sub });
-      if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
+    async (req) => {
+      await categoryService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );

@@ -7,7 +7,7 @@ import {
   notificationEntity,
   okResponse,
 } from '../lib/schemas.js';
-import { Notification } from '../models/Notification.js';
+import { notificationService } from '../services/notificationService.js';
 
 const notificationsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', app.auth);
@@ -49,16 +49,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req) => {
-      const limit = req.query.limit ?? 100;
-      const skip = req.query.skip ?? 0;
-      const items = await Notification.find({ userId: req.user.sub })
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean();
-      return { items };
-    },
+    async (req) => ({ items: await notificationService.list(req.user.sub, req.query.limit ?? 100, req.query.skip ?? 0) }),
   );
 
   // POST / used to allow client-side creation of notifications. Removed:
@@ -83,15 +74,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const item = await Notification.findOneAndUpdate(
-        { _id: req.params.id, userId: req.user.sub },
-        { read: true },
-        { new: true, lean: true },
-      );
-      if (!item) return reply.code(404).send({ error: 'not_found' });
-      return { item };
-    },
+    async (req) => ({ item: await notificationService.markRead(req.user.sub, req.params.id) }),
   );
 
   app.post(
@@ -109,7 +92,7 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
       },
     },
     async (req) => {
-      await Notification.updateMany({ userId: req.user.sub, read: false }, { read: true });
+      await notificationService.markAllRead(req.user.sub);
       return { ok: true };
     },
   );
@@ -130,9 +113,8 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
         },
       },
     },
-    async (req, reply) => {
-      const res = await Notification.deleteOne({ _id: req.params.id, userId: req.user.sub });
-      if (res.deletedCount === 0) return reply.code(404).send({ error: 'not_found' });
+    async (req) => {
+      await notificationService.remove(req.user.sub, req.params.id);
       return { ok: true };
     },
   );
