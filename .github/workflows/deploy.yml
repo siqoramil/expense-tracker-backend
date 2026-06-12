@@ -39,7 +39,7 @@ jobs:
         # it to a file and drive a plain ssh session. Host and user are public.
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/deploy_key
+          echo "${{ secrets.VPS_SSH_KEY }}" | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@185.243.215.127 \
             "set -e && cd ~/extracker && git pull origin main && docker compose up -d --build && docker image prune -f && docker compose ps"
