@@ -22,7 +22,7 @@ export default tseslint.config(
         projectService: {
           // Allow files not explicitly listed in tsconfig (config file, test files,
           // vitest config) to still be type-checked with default tsconfig settings.
-          allowDefaultProject: ['eslint.config.mjs', 'tests/*.ts', 'vitest.config.ts'],
+          allowDefaultProject: ['eslint.config.mjs', 'tests/*.ts', 'vitest.config.mts'],
         },
         tsconfigRootDir: import.meta.dirname,
       },
