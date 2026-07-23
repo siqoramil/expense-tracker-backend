@@ -3,19 +3,19 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import type { default as Ajv } from 'ajv';
 import Fastify from 'fastify';
-import authPlugin from '@/plugins/auth.js';
-import authRoutes from '@/routes/auth.js';
-import budgetsRoutes from '@/routes/budgets.js';
-import categoriesRoutes from '@/routes/categories.js';
-import debtsRoutes from '@/routes/debts.js';
-import mongoPlugin from '@/plugins/mongo.js';
-import notificationsRoutes from '@/routes/notifications.js';
-import recurringRoutes from '@/routes/recurring.js';
-import swaggerPlugin from '@/plugins/swagger.js';
-import transactionsRoutes from '@/routes/transactions.js';
-import walletsRoutes from '@/routes/wallets.js';
 import { AppError } from '@/core';
-import { env } from '@/lib/env.js';
+import { env } from '@/lib';
+import { authPlugin, mongoPlugin, swaggerPlugin } from '@/plugins';
+import {
+  authRoutes,
+  budgetsRoutes,
+  categoriesRoutes,
+  debtsRoutes,
+  notificationsRoutes,
+  recurringRoutes,
+  transactionsRoutes,
+  walletsRoutes,
+} from '@/routes';
 
 export const buildApp = async () => {
   const isProd = env.nodeEnv === 'production';

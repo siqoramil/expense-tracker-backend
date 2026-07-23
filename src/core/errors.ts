@@ -1,11 +1,3 @@
-// Typed application errors. Services throw these instead of touching the HTTP
-// `reply`; the global error handler (src/app.ts) maps an AppError to its
-// status code and the `{ error: <code> }` envelope. This keeps business logic
-// transport-agnostic and removes the scattered inline `reply.code().send()`
-// calls that used to live in every route.
-//
-// `code` is the short snake_case string the mobile client maps to an i18n key
-// (e.g. invalid_credentials, wallet_not_found).
 export class AppError extends Error {
   constructor(
     readonly statusCode: number,
@@ -13,10 +5,6 @@ export class AppError extends Error {
   ) {
     super(code);
     this.name = new.target.name;
-    // Restore the prototype chain: when this class is transpiled to a target
-    // that downlevels `class extends Error`, the instance's prototype is set to
-    // Error.prototype, which breaks `err instanceof AppError` in the global
-    // error handler. Re-pointing it keeps instanceof working at runtime.
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
