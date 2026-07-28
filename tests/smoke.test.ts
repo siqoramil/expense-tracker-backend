@@ -31,8 +31,6 @@ describe('system', () => {
   });
 });
 
-// Every protected route prefix must reject unauthenticated traffic before
-// touching the DB. Hitting the list endpoint of each prefix is enough.
 const protectedListRoutes: Array<{ method: 'GET'; url: string; label: string }> = [
   { method: 'GET', url: '/auth/me', label: 'auth' },
   { method: 'GET', url: '/categories/', label: 'categories' },
@@ -126,13 +124,9 @@ describe('public auth route validation', () => {
 });
 
 describe('schema validation on protected routes (with valid jwt)', () => {
-  // A valid JWT lets us pass the auth preHandler so route-level body schema
-  // runs. The handler still won't query the DB if the body is rejected.
   let token: string;
 
   beforeAll(() => {
-    // app.jwt is decorated by the auth plugin; sign a token for a fake sub.
-    // 24-hex-char ObjectId-shaped string keeps any downstream casts happy.
     token = (app as unknown as { jwt: { sign: (p: object) => string } }).jwt.sign({
       sub: '0123456789abcdef01234567',
     });
@@ -222,14 +216,12 @@ describe('cors', () => {
         'access-control-request-method': 'GET',
       },
     });
-    // Fastify cors rejects with 500/CORS error or omits ACAO header.
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
 });
 
 describe('rate limiting', () => {
   it('GET /health is on the rate-limit allow list (1000 quick hits all 200)', async () => {
-    // /health is allowList'd in app.ts so it should never throttle.
     for (let i = 0; i < 50; i += 1) {
       const res = await app.inject({ method: 'GET', url: '/health' });
       expect(res.statusCode).toBe(200);
