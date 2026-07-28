@@ -187,6 +187,15 @@ describe('schema validation on protected routes (with valid jwt)', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('GET /notifs/?skip=... → 400 when skip exceeds the cap', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/notifs/?skip=100000',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('POST /recurring/ → 400 when cat is not an ObjectId', async () => {
     const res = await app.inject({
       method: 'POST',

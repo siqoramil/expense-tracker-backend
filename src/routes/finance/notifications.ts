@@ -34,8 +34,13 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
             skip: {
               type: 'integer',
               minimum: 0,
+              // Mongo walks and discards every skipped document, so an
+              // unbounded offset is a cheap way to make the server do
+              // expensive work. Well past any real notification history.
+              maximum: 10_000,
               default: 0,
-              description: 'Number of notifications to skip (offset-based pagination). Default: 0.',
+              description:
+                'Number of notifications to skip (offset-based pagination). Default: 0. Max: 10000.',
               example: 0,
             },
           },
