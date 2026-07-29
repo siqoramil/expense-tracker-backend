@@ -166,8 +166,24 @@ export const buildApp = async () => {
           validationContext: err.validationContext,
         });
       }
-      const safe = /[\s.<>:]/.test(err.message ?? '') ? 'bad_request' : err.message || 'error';
-      return reply.code(status).send({ error: safe });
+      // Anything that reaches here is a 4xx raised outside the service layer
+      // (a plugin, a parser, a library). Its `message` is not ours to trust:
+      // a shape check alone would still forward whatever single-token string a
+      // dependency happened to throw. Map the codes we knowingly emit and fall
+      // back to a generic one, so no library internals reach the client.
+      const KNOWN_4XX: Record<number, string> = {
+        400: 'bad_request',
+        401: 'unauthorized',
+        403: 'forbidden',
+        404: 'not_found',
+        406: 'not_acceptable',
+        408: 'request_timeout',
+        409: 'conflict',
+        413: 'payload_too_large',
+        415: 'unsupported_media_type',
+        429: 'rate_limit_exceeded',
+      };
+      return reply.code(status).send({ error: KNOWN_4XX[status] ?? 'bad_request' });
     },
   );
 
