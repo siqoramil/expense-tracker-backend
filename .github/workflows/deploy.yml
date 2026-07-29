@@ -32,14 +32,42 @@ jobs:
       # Never run two deploys at once; a newer push cancels an in-flight one.
       group: deploy-production
       cancel-in-progress: false
+    env:
+      # Host and user are not secret. VPS_USER should be a non-root account
+      # that owns ~/extracker and is in the `docker` group — deploying as root
+      # means a leaked deploy key is an instant full-host compromise. Set the
+      # repository variable to switch; it falls back to root until you do.
+      VPS_HOST: 185.243.215.127
+      VPS_USER: ${{ vars.VPS_USER || 'root' }}
     steps:
       - name: Deploy over SSH
-        # The private key is stored base64-encoded in VPS_SSH_KEY_B64 (a single
+        # The private key is stored base64-encoded in VPS_SSH_KEY (a single
         # line, so it can't get corrupted by copy/paste line-wrapping). We decode
-        # it to a file and drive a plain ssh session. Host and user are public.
+        # it to a file and drive a plain ssh session.
+        #
+        # The host key is pinned from VPS_SSH_HOST_KEY rather than trusted on
+        # first use. Every run starts on a fresh runner with an empty
+        # known_hosts, so `StrictHostKeyChecking=accept-new` accepted whatever
+        # answered the connection: anyone able to spoof DNS or sit on the path
+        # would receive the deploy key and a shell on the target. Pinning makes
+        # a substituted host fail the connection instead.
+        #
+        # Generate the secret with:
+        #   ssh-keyscan -t ed25519 185.243.215.127 | base64
+        # and verify it against `ssh-keyscan` run *on the VPS itself* before
+        # storing it.
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new root@185.243.215.127 \
+          echo "${{ secrets.VPS_SSH_HOST_KEY }}" | base64 -d > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          test -s ~/.ssh/known_hosts || { echo "VPS_SSH_HOST_KEY secret is missing or empty"; exit 1; }
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            -o IdentitiesOnly=yes \
+            "$VPS_USER@$VPS_HOST" \
             "set -e && cd ~/extracker && git pull origin main && docker compose up -d --build && docker image prune -f && docker compose ps"
