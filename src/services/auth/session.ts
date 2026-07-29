@@ -161,6 +161,13 @@ export const linkGoogle = async (
   }
   user.googleId = payload.sub;
   if (!user.avatar && payload.picture) user.avatar = payload.picture;
-  await userRepository.save(user);
+  try {
+    await userRepository.save(user);
+  } catch (err) {
+    // Race: another request linked the same Google sub between the check above
+    // and this write. The partial unique index on googleId rejects it.
+    if (isDuplicateKeyError(err)) throw new ConflictError('google_account_in_use');
+    throw err;
+  }
   return user;
 };

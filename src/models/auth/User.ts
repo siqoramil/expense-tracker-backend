@@ -6,7 +6,7 @@ const userSchema = new Schema(
     passwordHash: { type: String, default: '' },
     name: { type: String, required: true, trim: true },
     avatar: { type: String, default: '' },
-    googleId: { type: String, default: '', index: true },
+    googleId: { type: String, default: '' },
     // Bumped on credential changes (register, password reset). Any JWT whose
     // `iat` is older than this is rejected, so password reset invalidates
     // every previously-issued token.
@@ -36,6 +36,17 @@ const userSchema = new Schema(
     },
   },
   { timestamps: true },
+);
+
+// One Google identity may back at most one account. linkGoogle() checks this
+// with a read before the write, which leaves a race window where two
+// concurrent link requests could both pass; the index closes it at the
+// storage layer. Partial, because password-only users all share the ''
+// default and a plain unique index would reject every one of them after the
+// first.
+userSchema.index(
+  { googleId: 1 },
+  { unique: true, partialFilterExpression: { googleId: { $gt: '' } } },
 );
 
 export type UserDoc = InferSchemaType<typeof userSchema>;
