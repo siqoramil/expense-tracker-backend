@@ -27,11 +27,11 @@
     "@fastify/swagger-ui": "^5.2.6",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.5",
-    "fastify": "^5.1.0",
+    "fastify": "^5.10.0",
     "fastify-plugin": "^5.0.1",
     "google-auth-library": "^10.6.2",
-    "mongoose": "^8.8.2",
-    "nodemailer": "^8.0.6"
+    "mongoose": "^8.24.2",
+    "nodemailer": "^9.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -47,7 +47,6 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.60.1",
-    "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.10"
   }
 }
