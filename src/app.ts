@@ -94,6 +94,18 @@ export const buildApp = async () => {
     allowList: (req) => req.url === '/health',
   });
 
+  // Production always runs behind a TLS-terminating proxy (see
+  // docker-compose.yml: the app port is published on 127.0.0.1 only). If
+  // TRUST_PROXY is not set there, every request is keyed to the proxy's single
+  // IP and the per-IP limits above become server-wide — one abusive client
+  // exhausts the quota for everyone. Loud on boot rather than silent at 3am.
+  if (isProd && !env.trustProxy) {
+    app.log.warn(
+      'TRUST_PROXY is false in production: rate limits will bucket every ' +
+        'client onto the proxy IP. Set TRUST_PROXY=true when behind a reverse proxy.',
+    );
+  }
+
   await app.register(mongoPlugin);
   await app.register(authPlugin);
   if (env.enableSwagger) await app.register(swaggerPlugin);

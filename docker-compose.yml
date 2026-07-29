@@ -68,6 +68,13 @@ services:
       # Mongo is reachable only on the private compose network (not published),
       # so a plaintext (non-TLS) connection is acceptable here.
       MONGO_ALLOW_INSECURE: 'true'
+      # The port below is published on 127.0.0.1 only, so the sole client that
+      # can reach us is the host reverse proxy — X-Forwarded-For cannot be
+      # spoofed by an outside caller. Without this, @fastify/rate-limit keys
+      # every request to the proxy's single IP and the per-IP limits (200/min
+      # global, 10/min on login) become server-wide: one abusive client would
+      # exhaust the quota for every user.
+      TRUST_PROXY: 'true'
     ports:
       # Loopback-only: TLS terminates at the host reverse proxy (Caddy/nginx),
       # which forwards to 127.0.0.1:3000. The API must not be reachable
