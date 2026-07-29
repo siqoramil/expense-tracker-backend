@@ -213,10 +213,54 @@ describe('schema validation on protected routes (with valid jwt)', () => {
   });
 });
 
+describe('token-type confinement', () => {
+  type Signer = { jwt: { sign: (p: object, o?: object) => string } };
+
+  it('rejects a password_reset_verified token used as a session bearer', async () => {
+    // Same secret as session tokens, so it passes jwtVerify(). The auth hook
+    // must still refuse it: its `sub` is an email, not a user id.
+    const verifiedToken = (app as unknown as Signer).jwt.sign(
+      { sub: 'jane@example.com', purpose: 'password_reset_verified' },
+      { expiresIn: '2m' },
+    );
+    for (const url of ['/auth/me', '/tx/', '/wallets/']) {
+      const res = await app.inject({
+        method: 'GET',
+        url,
+        headers: { authorization: `Bearer ${verifiedToken}` },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toEqual({ error: 'unauthorized' });
+    }
+  });
+
+  it('accepts a session-purpose token', async () => {
+    const token = (app as unknown as Signer).jwt.sign({
+      sub: '0123456789abcdef01234567',
+      purpose: 'session',
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/tx/?month=2026-13',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // 400 (schema), not 401 — proves the token cleared the auth hook.
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('still accepts legacy tokens with no purpose claim', async () => {
+    const token = (app as unknown as Signer).jwt.sign({ sub: '0123456789abcdef01234567' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/tx/?month=2026-13',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe('cors', () => {
   it('blocks unknown production-style origins', async () => {
-    // In NODE_ENV=test (treated as non-prod) localhost is allowed but a
-    // random origin is not.
     const res = await app.inject({
       method: 'OPTIONS',
       url: '/health',

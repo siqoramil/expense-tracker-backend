@@ -23,9 +23,11 @@ export const toUserDTO = (u: InstanceType<typeof User>) => ({
 });
 
 // Signs a session JWT carrying `pca` (passwordChangedAt, seconds) so tokens
-// issued before a credential change can be rejected.
+// issued before a credential change can be rejected, and `purpose: 'session'`
+// so the auth hook can tell a session apart from a single-use flow token
+// signed with the same secret.
 export const sessionResponse = (app: FastifyInstance, user: InstanceType<typeof User>) => {
   const pca = Math.floor((user.passwordChangedAt?.getTime() ?? 0) / 1000);
-  const token = app.jwt.sign({ sub: user.id as string, pca });
+  const token = app.jwt.sign({ sub: user.id as string, pca, purpose: 'session' });
   return { token, user: toUserDTO(user) };
 };

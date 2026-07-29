@@ -49,7 +49,7 @@ const passwordRoutes: FastifyPluginAsync = async (app) => {
         tags: ['Auth'],
         summary: 'Verify password reset code',
         description:
-          'Checks that the supplied reset code is valid for the given email and returns a short-lived verifiedToken (exp=2 min) that POST /auth/password/reset requires. Using a one-time token prevents the raw code from being replayed directly into the reset step. Locked after 5 failed code attempts.',
+          'Checks that the supplied reset code is valid for the given email and returns a short-lived verifiedToken (exp=2 min) that POST /auth/password/reset requires. Requiring this token prevents the raw code from being replayed directly into the reset step. The token is not single-use: it stays valid for its full TTL, and /auth/password/reset still requires the raw code alongside it. Locked after 5 failed code attempts.',
         body: {
           type: 'object',
           required: ['email', 'code'],
@@ -93,9 +93,11 @@ const passwordRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req) => {
       const { email } = await authService.verifyResetCode(req.body.email, req.body.code);
-      // Issue a short-lived one-time token proving this code was verified.
+      // Issue a short-lived token proving this code was verified.
       // /password/reset requires it so a valid code cannot be replayed
-      // directly without first passing through this endpoint.
+      // directly without first passing through this endpoint. It is not
+      // single-use — it stays valid for its full 2-minute TTL — but on its
+      // own it is not enough: /password/reset still requires the raw code.
       const verifiedToken = app.jwt.sign(
         { sub: email, purpose: 'password_reset_verified' },
         { expiresIn: VERIFIED_TOKEN_TTL },

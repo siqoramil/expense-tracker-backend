@@ -11,8 +11,10 @@ declare module 'fastify' {
 
 declare module '@fastify/jwt' {
   interface FastifyJWT {
-    // `purpose` scopes single-use tokens (e.g. password_reset_verified) so a
-    // token minted for one flow can't be replayed in another.
+    // `purpose` scopes tokens to one flow so a token minted for one can't be
+    // replayed in another. Session tokens carry 'session'; single-use tokens
+    // carry their own value (e.g. 'password_reset_verified'). The auth hook
+    // below accepts only session tokens.
     // `pca` (passwordChangedAt) is epoch-seconds at sign time; lets the auth
     // hook enforce revocation without a Mongo lookup per request.
     payload: { sub: string; purpose?: string; pca?: number };
@@ -32,6 +34,17 @@ export default fp(async (app) => {
     try {
       await req.jwtVerify();
     } catch {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+
+    // Token-type confinement. Single-use tokens minted for other flows (the
+    // `password_reset_verified` token from /auth/password/verify-code) are
+    // signed with the same secret, so they pass jwtVerify() here too — and
+    // their `sub` is an email, not a user id. Only session tokens may
+    // authenticate a request. `undefined` is still accepted so sessions issued
+    // before `purpose` was stamped survive the rollout; drop that arm once
+    // JWT_EXPIRES_IN has elapsed since deploy.
+    if (req.user.purpose !== undefined && req.user.purpose !== 'session') {
       return reply.code(401).send({ error: 'unauthorized' });
     }
 
